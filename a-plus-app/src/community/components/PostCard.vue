@@ -61,7 +61,7 @@ function addComment() {
       <span>◷ {{ post.eventStartsAt ? new Date(post.eventStartsAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '时间待定' }}</span>
       <span>报名 {{ post.eventSignupCount ?? 0 }}<template v-if="post.eventCapacity"> / {{ post.eventCapacity }} 人</template></span>
     </div>
-    <div v-if="!compact && post.moderation === 'approved'" class="post-actions">
+    <div v-if="!compact && post.moderation === 'approved' && post.publishedToFeed !== false" class="post-actions">
       <button type="button" :class="{ chosen: post.likedByMe }" @click="run(() => store.toggleLike(post.id), '已更新点赞。')"><span>♡</span>{{ post.likeCount }}</button>
       <button type="button" @click="showComment = !showComment"><span>▱</span>{{ approvedComments.length }} 条评论</button>
       <button v-if="post.mode === 'help'" class="post-action-cta" type="button" :disabled="post.orderStatus !== 'open' || isMyHelpPost" @click="run(() => store.acceptOrder(post.id), '已在本机演练中标记接单。')">{{ isMyHelpPost ? '我的求助' : post.acceptedByMe ? '我已接单' : post.orderStatus === 'accepted-local-demo' ? '已有人接单' : '演练接单' }}</button>
@@ -69,7 +69,7 @@ function addComment() {
       <span v-else class="local-action-label">仅本机互动</span>
       <button type="button" @click="reportTarget = {type: 'post', id: post.id}">举报</button>
     </div>
-    <div v-if="showComment && !compact && post.moderation === 'approved'" class="comment-panel">
+    <div v-if="showComment && !compact && post.moderation === 'approved' && post.publishedToFeed !== false" class="comment-panel">
       <div v-if="approvedComments.length" class="comment-list">
         <p v-for="comment in approvedComments" :key="comment.id"><strong>{{ comment.author.name }}：</strong>{{ comment.content }} <button type="button" @click="reportTarget = {type: 'comment', id: comment.id}">举报评论</button></p>
       </div>

@@ -13,6 +13,8 @@ const activeSection = ref<'posts' | 'favorites' | 'ledger' | 'orders'>('posts')
 const demoUserId = 'SYNTH-DEMO-USER'
 const intakeProgress = ref<IntakeProgressSnapshot>({ state: 'missing', records: [] })
 const myPosts = computed(() => store.posts.filter((post) => post.author.id === demoUserId).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+const myComments = computed(() => store.posts.flatMap(post => post.comments.filter(comment => comment.author.id === demoUserId).map(comment => ({ post, comment }))))
+const moderationLabels = { pending: '待审核', approved: '审核通过', rejected: '已驳回', hidden: '已下架' }
 const favoritePosts = computed(() => store.visiblePosts.filter((post) => post.favorited).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
 const myOrders = computed(() => store.posts
   .filter((post) => post.mode === 'help' && (post.author.id === demoUserId || post.acceptedByMe === true))
@@ -170,10 +172,13 @@ async function resetData() {
       <div v-if="activeSection === 'posts'" class="profile-post-list">
         <article v-for="post in myPosts" :key="post.id" class="profile-post-row">
           <div class="profile-post-icon" :class="`kind-${post.mode}`">{{ post.mode === 'help' ? '↗' : post.mode === 'volunteer' ? '✳' : '⌂' }}</div>
-          <div><strong>{{ post.title }}</strong><p>{{ post.mode === 'volunteer' && post.volunteerKind === 'activity' ? '志愿活动' : post.mode === 'volunteer' ? '志愿记录' : post.mode === 'help' ? '通用求助登记' : '邻里分享' }} · {{ post.publishedToFeed === false ? '仅自己可见' : '社区动态可见' }} · {{ statusLabel(post) }}</p></div>
+          <div><strong>{{ post.title }}</strong><p>{{ post.mode === 'volunteer' && post.volunteerKind === 'activity' ? '志愿活动' : post.mode === 'volunteer' ? '志愿记录' : post.mode === 'help' ? '通用求助登记' : '邻里分享' }} · {{ post.publishedToFeed === false ? '仅自己可见' : post.moderation === 'approved' ? '社区动态可见' : '未公开' }} · {{ statusLabel(post) }}</p><p v-if="post.reviewNote">审核说明：{{ post.reviewNote }}</p></div>
           <span class="post-date">{{ new Date(post.createdAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) }}</span>
         </article>
         <div v-if="!myPosts.length" class="empty-state compact-empty"><h3>还没有发布内容</h3><p>发布的演练内容会显示在这里。</p></div>
+        <h3>我的评论</h3>
+        <article v-for="item in myComments" :key="item.comment.id" class="feedback-card"><strong>{{ item.post.title }} · {{ moderationLabels[item.comment.moderation ?? 'pending'] }}</strong><p>{{ item.comment.content }}</p><p v-if="item.comment.reviewNote">审核说明：{{ item.comment.reviewNote }}</p></article>
+        <p v-if="!myComments.length">暂无本机评论记录。</p>
       </div>
 
       <div v-else-if="activeSection === 'favorites'" class="feed-list profile-favorites">
