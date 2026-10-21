@@ -13,7 +13,7 @@ const activeSection = ref<'posts' | 'favorites' | 'ledger' | 'orders'>('posts')
 const demoUserId = 'SYNTH-DEMO-USER'
 const intakeProgress = ref<IntakeProgressSnapshot>({ state: 'missing', records: [] })
 const myPosts = computed(() => store.posts.filter((post) => post.author.id === demoUserId).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
-const favoritePosts = computed(() => store.posts.filter((post) => post.favorited).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+const favoritePosts = computed(() => store.visiblePosts.filter((post) => post.favorited).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
 const myOrders = computed(() => store.posts
   .filter((post) => post.mode === 'help' && (post.author.id === demoUserId || post.acceptedByMe === true))
   .slice()
@@ -39,6 +39,9 @@ function formatMinutes(minutes: number) {
 }
 
 function statusLabel(post: Post) {
+  if ((post.moderation ?? 'pending') === 'pending') return '待审核，尚未公开'
+  if (post.moderation === 'rejected') return '审核未通过'
+  if (post.moderation === 'hidden') return '已下架'
   if (post.mode !== 'help') return '普通动态'
   if (post.acceptedByMe) return '我已演练接单'
   if (post.orderStatus === 'accepted-local-demo') return '已有人演练接单'

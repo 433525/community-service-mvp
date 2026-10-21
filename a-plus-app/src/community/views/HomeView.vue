@@ -16,15 +16,15 @@ const searchQuery = ref('')
 const searchFilter = ref<'all' | PostMode>('all')
 const now = new Date()
 const todayLabel = `${new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(now)} · ${new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(now)}`
-const feed = computed(() => store.posts.filter((post) => post.publishedToFeed !== false).slice(0, 2))
-const openHelpCount = computed(() => store.posts.filter((post) => post.mode === 'help' && post.orderStatus === 'open' && post.publishedToFeed !== false).length)
+const feed = computed(() => store.visiblePosts.filter((post) => post.publishedToFeed !== false).slice(0, 2))
+const openHelpCount = computed(() => store.visiblePosts.filter((post) => post.mode === 'help' && post.orderStatus === 'open' && post.publishedToFeed !== false).length)
 const searchFilters: { key: 'all' | PostMode; label: string }[] = [
   { key: 'all', label: '全部' }, { key: 'help', label: '求助' },
   { key: 'volunteer', label: '志愿' }, { key: 'neighbor', label: '邻里' },
 ]
 const searchMatches = computed(() => {
   const query = searchQuery.value.trim().toLocaleLowerCase()
-  return store.posts
+  return store.visiblePosts
     .filter((post) => post.publishedToFeed !== false)
     .filter((post) => searchFilter.value === 'all' || post.mode === searchFilter.value)
     .filter((post) => !query || `${post.title} ${post.content} ${post.location} ${post.category ?? ''}`.toLocaleLowerCase().includes(query))
@@ -85,15 +85,15 @@ function openCommunitySearch(filter: 'all' | PostMode = searchFilter.value, only
       <div class="section-heading"><div><span class="soft-label">TODAY AT QINGHELI</span><h2>社区一览</h2></div><span class="demo-caption">虚构演练数据</span></div>
       <div class="summary-grid">
         <div class="summary-tile"><span class="summary-icon mint">↗</span><div><strong>{{ openHelpCount.toString().padStart(2, '0') }}</strong><small>待接单求助</small></div><span class="summary-arrow">↗</span></div>
-        <div class="summary-tile"><span class="summary-icon peach">✳</span><div><strong>{{ store.posts.filter((post) => post.mode === 'volunteer').length.toString().padStart(2, '0') }}</strong><small>志愿活动与记录</small></div><span class="summary-arrow">↗</span></div>
-        <div class="summary-tile"><span class="summary-icon blue">◉</span><div><strong>{{ store.posts.filter((post) => post.publishedToFeed !== false).length.toString().padStart(2, '0') }}</strong><small>社区动态</small></div><span class="summary-arrow">↗</span></div>
+        <div class="summary-tile"><span class="summary-icon peach">✳</span><div><strong>{{ store.visiblePosts.filter((post) => post.mode === 'volunteer').length.toString().padStart(2, '0') }}</strong><small>志愿活动与记录</small></div><span class="summary-arrow">↗</span></div>
+        <div class="summary-tile"><span class="summary-icon blue">◉</span><div><strong>{{ store.visiblePosts.filter((post) => post.publishedToFeed !== false).length.toString().padStart(2, '0') }}</strong><small>社区动态</small></div><span class="summary-arrow">↗</span></div>
       </div>
     </section>
 
     <section class="home-feed-section">
       <div class="section-heading"><div><span class="soft-label">FROM YOUR COMMUNITY</span><h2>邻里新鲜事</h2></div><button class="text-link" type="button" @click="emit('navigate', 'community')">查看全部 <span>→</span></button></div>
       <div class="feed-list"><PostCard v-for="post in feed" :key="post.id" :post="post" compact @toast="emit('toast', $event)" /></div>
-      <div v-if="feed.length === 0" class="empty-state">还没有公开的演练动态。发布后可在这里预览。</div>
+      <div v-if="feed.length === 0" class="empty-state">还没有公开的演练动态。发布并审核通过后可在这里查看。</div>
     </section>
 
     <section class="care-strip">

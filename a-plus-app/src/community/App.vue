@@ -6,8 +6,11 @@ import CommunityView from './views/CommunityView.vue'
 import PublishView from './views/PublishView.vue'
 import MessagesView from './views/MessagesView.vue'
 import ProfileView from './views/ProfileView.vue'
+import ModerationView from './views/ModerationView.vue'
+import { useCommunityStore } from './store'
+const store = useCommunityStore()
 
-type TabKey = 'home' | 'community' | 'publish' | 'messages' | 'profile'
+type TabKey = 'home' | 'community' | 'publish' | 'messages' | 'profile' | 'moderation'
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
   { key: 'home', label: '首页', icon: '⌂' },
@@ -15,6 +18,7 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
   { key: 'publish', label: '发布', icon: '+' },
   { key: 'messages', label: '消息', icon: '▤' },
   { key: 'profile', label: '我的', icon: '◌' },
+  { key: 'moderation', label: '审核', icon: '✓' },
 ]
 
 const activeTab = ref<TabKey>('home')
@@ -101,9 +105,17 @@ function openCommunitySearch(query: string, filter: 'all' | PostMode, openOnly =
           <span><strong>本地演练空间</strong> · 姓名、社区、帖子和消息均为虚构；任何操作都不会联系真实居民或机构。</span>
         </div>
 
-        <HomeView v-if="activeTab === 'home'" @navigate="navigateTab" @community-search="openCommunitySearch" @publish="openPublish" @toast="notify" />
+        <section class="membership-panel">
+          <div><strong>B · 受控社区演练</strong><p>仅邀请或本社区实名核验成员可进入。此处只切换虚构身份，不采集姓名、证件或真实邀请码。</p></div>
+          <label>演练身份<select :value="store.membership" @change="store.setMembership(($event.target as HTMLSelectElement).value as 'visitor' | 'member' | 'reviewer')"><option value="visitor">访客 · 未核验</option><option value="member">本社区已核验成员（合成）</option><option value="reviewer">审核员（合成）</option></select></label>
+          <small>演示身份不构成安全权限。真实上线需服务端登录、成员核验和审核员授权。</small>
+        </section>
+        <ModerationView v-if="activeTab === 'moderation'" @toast="notify" />
+        <div v-else-if="store.membership === 'visitor'" class="empty-state"><h3>这是受控社区</h3><p>请先切换为合成成员体验登记与互动。真实成员准入由运营方核验后开放。</p></div>
+        <div v-else-if="store.membership === 'reviewer'" class="empty-state"><h3>审核员工作入口</h3><p>进入审核处理内容与举报；发布和接单请切回合成成员身份。</p><button class="button-primary" @click="activeTab = 'moderation'">进入审核后台</button></div>
+        <HomeView v-else-if="activeTab === 'home'" @navigate="navigateTab" @community-search="openCommunitySearch" @publish="openPublish" @toast="notify" />
         <CommunityView v-else-if="activeTab === 'community'" :initial-query="communityQuery" :initial-filter="communityFilter" :only-open-help="onlyOpenHelp" @toast="notify" />
-        <PublishView v-else-if="activeTab === 'publish'" :initial-mode="publishMode" @toast="notify" @published="navigateTab('community')" />
+        <PublishView v-else-if="activeTab === 'publish'" :initial-mode="publishMode" @toast="notify" @published="navigateTab('profile')" />
         <MessagesView v-else-if="activeTab === 'messages'" @toast="notify" />
         <ProfileView v-else @toast="notify" @navigate="navigateTab" @browse-open-help="openCommunitySearch('', 'help', true)" />
       </main>

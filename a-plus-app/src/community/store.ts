@@ -1,18 +1,25 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
+  AUDIT_ACTIONS,
   COMPLAINT_LOCAL_ONLY_NOTICE,
   COMPLAINT_STATUS,
-  DEMO_CHAT_AUTO_REPLY_NOTICE,
   DEMO_MESSAGE_SENDERS,
   DEMO_THREAD_KINDS,
   EVENT_LOCAL_DEMO_NOTICE,
   LEDGER_ENTRY_STATUS,
+  MEMBERSHIP_ROLES,
+  MODERATION_STATUSES,
   ORDER_LOCAL_DEMO_NOTICE,
   ORDER_STATUSES,
   POST_MODES,
+  REPORT_STATUSES,
+  REPORT_TARGET_TYPES,
+  REVIEW_STATUSES,
   VOLUNTEER_POST_KINDS,
   SYNTHETIC_DATA_NOTICE,
+  type AuditAction,
+  type AuditLogEntry,
   type Comment,
   type CommunityActionResult,
   type CommunityState,
@@ -22,10 +29,15 @@ import {
   type DemoThread,
   type FictionalAuthor,
   type LedgerEntry,
+  type MembershipRole,
   type NewComplaintInput,
   type Post,
   type PostMode,
   type PublishPostInput,
+  type Report,
+  type ReportStatus,
+  type ReportTargetType,
+  type ReviewStatus,
 } from './types'
 import { createCommunityFixtures, SYNTHETIC_DEMO_AUTHOR } from './fixtures'
 import {
@@ -54,12 +66,21 @@ const MAX_THREADS = 50
 const MAX_MESSAGES_PER_THREAD = 300
 const MAX_COMPLAINTS = 200
 const MAX_LEDGER_ENTRIES = 200
+const MAX_REPORTS = 200
+const MAX_AUDIT_LOG = 500
 const MAX_TITLE_CHARS = 120
 const MAX_LOCATION_CHARS = 120
 const MAX_CONTENT_CHARS = 2_000
 const MAX_COMMENT_CHARS = 1_000
-const MAX_CHAT_CHARS = 1_000
+const MAX_MESSAGE_CHARS = 1_000
 const MAX_DETAIL_CHARS = 240
+const MAX_REASON_CHARS = 240
+
+const MEMBERSHIP_LABELS: Record<MembershipRole, string> = {
+  visitor: '访客',
+  member: '演练成员',
+  reviewer: '审核员',
+}
 
 interface StoredCommunityEnvelope {
   app: typeof STORAGE_APP
@@ -115,14 +136,24 @@ function isFictionalAuthor(value: unknown): value is FictionalAuthor {
     && value.synthetic === true
 }
 
+function isOptionalReviewNote(value: unknown): value is string | undefined {
+  return value === undefined
+    || (isNonEmptyString(value) && value.length <= MAX_REASON_CHARS)
+}
+
 function isComment(value: unknown): value is Comment {
-  return isRecord(value)
-    && isNonEmptyString(value.id)
-    && isNonEmptyString(value.postId)
-    && isFictionalAuthor(value.author)
-    && isNonEmptyString(value.content)
-    && isTimestamp(value.createdAt)
-    && value.synthetic === true
+  if (!isRecord(value)) return false
+  if (
+    !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.postId)
+    || !isFictionalAuthor(value.author)
+    || !isNonEmptyString(value.content)
+    || (!isOneOf(value.moderation, MODERATION_STATUSES) && value.moderation !== undefined)
+    || !isOptionalReviewNote(value.reviewNote)
+    || !isTimestamp(value.createdAt)
+    || value.synthetic !== true
+  ) return false
+  return true
 }
 
 function isPost(value: unknown): value is Post {
@@ -138,6 +169,8 @@ function isPost(value: unknown): value is Post {
     || !isNonNegativeInteger(value.likeCount)
     || typeof value.likedByMe !== 'boolean'
     || typeof value.favorited !== 'boolean'
+    || (!isOneOf(value.moderation, MODERATION_STATUSES) && value.moderation !== undefined)
+    || !isOptionalReviewNote(value.reviewNote)
     || !Array.isArray(value.comments)
     || value.comments.length > MAX_COMMENTS_PER_POST
     || value.synthetic !== true
@@ -202,6 +235,8 @@ function isDemoMessage(value: unknown): value is DemoMessage {
     || !isNonEmptyString(value.content)
     || !isTimestamp(value.createdAt)
     || typeof value.automaticReply !== 'boolean'
+    || (value.hidden !== undefined && typeof value.hidden !== 'boolean')
+    || !isOptionalReviewNote(value.reviewNote)
     || value.synthetic !== true
   ) return false
   if (value.sender === 'synthetic-auto-reply' && value.automaticReply !== true) return false
@@ -214,6 +249,11 @@ function isDemoThread(value: unknown): value is DemoThread {
     !isNonEmptyString(value.id)
     || !isOneOf(value.kind, DEMO_THREAD_KINDS)
     || !isNonEmptyString(value.title)
+    || (value.postId !== undefined && (
+      value.kind !== 'order'
+      || !isNonEmptyString(value.postId)
+      || value.postId.length > MAX_TITLE_CHARS
+    ))
     || !isTimestamp(value.updatedAt)
     || !Array.isArray(value.messages)
     || value.messages.length > MAX_MESSAGES_PER_THREAD
@@ -243,6 +283,63 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
     && isNonEmptyString(value.note)
     && isTimestamp(value.createdAt)
     && value.synthetic === true
+}
+
+function isReport(value: unknown): value is Report {
+  if (!isRecord(value)) return false
+  if (
+    !isNonEmptyString(value.id)
+    || !isOneOf(value.targetType, REPORT_TARGET_TYPES)
+    || !isNonEmptyString(value.targetId)
+    || !isNonEmptyString(value.reason)
+    || value.reason.length > MAX_REASON_CHARS
+    || !isOneOf(value.status, REPORT_STATUSES)
+    || !isTimestamp(value.createdAt)
+    || value.synthetic !== true
+  ) return false
+  if (value.status === 'pending') return value.resolution === undefined
+  return isNonEmptyString(value.resolution) && value.resolution.length <= MAX_REASON_CHARS
+}
+
+function isAuditLogEntry(value: unknown): value is AuditLogEntry {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && isOneOf(value.action, AUDIT_ACTIONS)
+    && isNonEmptyString(value.targetId)
+    && isNonEmptyString(value.reason)
+    && value.reason.length <= MAX_REASON_CHARS
+    && (value.decision === undefined || isOneOf(value.decision, ['pending', 'approved', 'rejected', 'hidden', 'resolved', 'dismissed'] as const))
+    && isTimestamp(value.createdAt)
+    && value.synthetic === true
+}
+
+function normalizeComment(comment: Comment): Comment {
+  return comment.moderation === undefined
+    ? { ...comment, moderation: 'pending' }
+    : comment
+}
+
+function normalizePost(post: Post): Post {
+  return {
+    ...post,
+    moderation: post.moderation ?? 'pending',
+    comments: post.comments.map(normalizeComment),
+  }
+}
+
+/**
+ * Legacy archives have no moderation fields and must not become public by
+ * accident. Legacy chat archives are retained but never rendered or writable.
+ */
+function normalizeCommunityState(state: CommunityState): CommunityState {
+  return {
+    posts: state.posts.map(normalizePost),
+    threads: state.threads,
+    complaints: state.complaints,
+    ledgerEntries: state.ledgerEntries,
+    reports: state.reports ?? [],
+    auditLog: state.auditLog ?? [],
+  }
 }
 
 function isCommunityState(value: unknown): value is CommunityState {
@@ -292,6 +389,26 @@ function isCommunityState(value: unknown): value is CommunityState {
     ledgerIds.add(entry.id)
   }
 
+  const reports = value.reports
+  if (reports !== undefined) {
+    if (!Array.isArray(reports) || reports.length > MAX_REPORTS) return false
+    const reportIds = new Set<string>()
+    for (const report of reports) {
+      if (!isReport(report) || reportIds.has(report.id)) return false
+      reportIds.add(report.id)
+    }
+  }
+
+  const auditLog = value.auditLog
+  if (auditLog !== undefined) {
+    if (!Array.isArray(auditLog) || auditLog.length > MAX_AUDIT_LOG) return false
+    const auditIds = new Set<string>()
+    for (const entry of auditLog) {
+      if (!isAuditLogEntry(entry) || auditIds.has(entry.id)) return false
+      auditIds.add(entry.id)
+    }
+  }
+
   return true
 }
 
@@ -321,7 +438,11 @@ function parseStoredCommunity(raw: string): ParseResult {
     return { ok: false, error: '社区演练存档字段无效，已保留原文且不会自动覆盖。' }
   }
 
-  return { ok: true, savedAt: value.savedAt, state: value.state }
+  return {
+    ok: true,
+    savedAt: value.savedAt,
+    state: normalizeCommunityState(value.state),
+  }
 }
 
 function getLocalStorage(): Storage | null {
@@ -333,7 +454,7 @@ function getLocalStorage(): Storage | null {
 }
 
 function loadInitialState(): LoadedCommunity {
-  const fixtures = createCommunityFixtures()
+  const fixtures = normalizeCommunityState(createCommunityFixtures())
   const storage = getLocalStorage()
   if (!storage) {
     return {
@@ -433,13 +554,16 @@ function resetFixturesWithFreshPostIds(): CommunityState {
   })
   fixtures.threads = fixtures.threads.map((thread) => ({
     ...thread,
+    ...(thread.postId
+      ? { postId: postIdMap.get(thread.postId) ?? thread.postId }
+      : {}),
     messages: thread.messages.map((message) => {
       let content = message.content
       for (const [oldId, newId] of postIdMap) content = content.split(oldId).join(newId)
       return { ...message, content }
     }),
   }))
-  return fixtures
+  return normalizeCommunityState(fixtures)
 }
 
 function nowIso(): string {
@@ -463,6 +587,10 @@ export const useCommunityStore = defineStore('community', () => {
   const threads = ref<DemoThread[]>(initialState.state.threads)
   const complaints = ref<Complaint[]>(initialState.state.complaints)
   const ledgerEntries = ref<LedgerEntry[]>(initialState.state.ledgerEntries)
+  const reports = ref<Report[]>(initialState.state.reports ?? [])
+  const auditLog = ref<AuditLogEntry[]>(initialState.state.auditLog ?? [])
+  /** Synthetic demo identity only; never persisted and never a real auth state. */
+  const membership = ref<MembershipRole>('visitor')
 
   const storageStatus = ref<CommunityStorageStatus>(initialState.status)
   const storageError = ref<string | null>(initialState.error)
@@ -476,12 +604,19 @@ export const useCommunityStore = defineStore('community', () => {
   const messages = computed<DemoMessage[]>(() =>
     threads.value.flatMap((thread) => thread.messages),
   )
+  const visiblePosts = computed<Post[]>(() =>
+    posts.value.filter((post) =>
+      post.moderation === 'approved' && post.publishedToFeed !== false,
+    ),
+  )
   const ledger = computed(() => ledgerEntries.value)
   const state = computed<CommunityState>(() => ({
     posts: posts.value,
     threads: threads.value,
     complaints: complaints.value,
     ledgerEntries: ledgerEntries.value,
+    reports: reports.value,
+    auditLog: auditLog.value,
   }))
 
   function applyState(next: CommunityState) {
@@ -489,6 +624,8 @@ export const useCommunityStore = defineStore('community', () => {
     threads.value = next.threads
     complaints.value = next.complaints
     ledgerEntries.value = next.ledgerEntries
+    reports.value = next.reports ?? []
+    auditLog.value = next.auditLog ?? []
   }
 
   function persistState(
@@ -576,7 +713,7 @@ export const useCommunityStore = defineStore('community', () => {
     // This read is the new baseline; a corrupt result still blocks writes via recovery state.
     lastKnownRaw = raw
     if (raw === null) {
-      applyState(createCommunityFixtures())
+      applyState(normalizeCommunityState(createCommunityFixtures()))
       storageStatus.value = 'ready'
       storageError.value = null
       lastSavedAt.value = null
@@ -622,6 +759,8 @@ export const useCommunityStore = defineStore('community', () => {
       threads: threads.value,
       complaints: complaints.value,
       ledgerEntries: ledgerEntries.value,
+      reports: reports.value,
+      auditLog: auditLog.value,
     }
   }
 
@@ -633,15 +772,80 @@ export const useCommunityStore = defineStore('community', () => {
       ),
       complaints: complaints.value,
       ledgerEntries: ledgerEntries.value,
+      reports: reports.value,
+      auditLog: auditLog.value,
     }
+  }
+
+  function setMembership(value: MembershipRole): CommunityActionResult {
+    if (!isOneOf(value, MEMBERSHIP_ROLES)) return failure('演练身份无效。')
+    membership.value = value
+    return {
+      ok: true,
+      errors: [],
+      message: `已切换为${MEMBERSHIP_LABELS[value]}（仅用于本机合成演示）。`,
+    }
+  }
+
+  function requireMember(): CommunityActionResult | null {
+    if (membership.value === 'member') return null
+    return failure(
+      membership.value === 'reviewer'
+        ? '审核身份不能代替演练成员完成发布或互动，请先切换为演练成员。'
+        : '请先切换为演练成员，再使用发布或互动功能。',
+    )
+  }
+
+  function requireReviewer(): CommunityActionResult | null {
+    return membership.value === 'reviewer'
+      ? null
+      : failure('只有审核员可以执行审核或处理举报。')
+  }
+
+  function nextAuditEntry(
+    action: AuditAction,
+    targetId: string,
+    reason: string,
+    decision?: AuditLogEntry['decision'],
+  ): AuditLogEntry {
+    return {
+      id: nextId('SYNTH-AUDIT', auditLog.value.map((entry) => entry.id)),
+      action,
+      targetId,
+      reason,
+      ...(decision ? { decision } : {}),
+      createdAt: nowIso(),
+      synthetic: true,
+    }
+  }
+
+  function normalizeReason(reason: unknown): string {
+    return typeof reason === 'string' ? reason.trim() : ''
+  }
+
+  function isVisiblePost(post: Post): boolean {
+    return post.moderation === 'approved' && post.publishedToFeed !== false
+  }
+
+  function participatesInOrder(post: Post): boolean {
+    return post.author.id === SYNTHETIC_DEMO_AUTHOR.id || post.acceptedByMe === true
+  }
+
+  function auditLimitBlocked(): CommunityActionResult | null {
+    return auditLog.value.length >= MAX_AUDIT_LOG
+      ? failure(`本机审核日志已达 ${MAX_AUDIT_LOG} 条上限，请先重置演练数据。`)
+      : null
   }
 
   function toggleLike(postId: string): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
     const post = posts.value.find((item) => item.id === postId)
     if (!post) return failure('找不到这条演练动态。')
+    if (!isVisiblePost(post)) return failure('只能互动审核通过且公开的帖子。')
 
     const likedByMe = !post.likedByMe
     const nextPost: Post = {
@@ -655,18 +859,24 @@ export const useCommunityStore = defineStore('community', () => {
   function toggleFavorite(postId: string): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
     const post = posts.value.find((item) => item.id === postId)
     if (!post) return failure('找不到这条演练动态。')
+    if (!isVisiblePost(post)) return failure('只能互动审核通过且公开的帖子。')
     return persistState(withPost({ ...post, favorited: !post.favorited }))
   }
 
   function addComment(postId: string, content: string): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
     const post = posts.value.find((item) => item.id === postId)
     if (!post) return failure('找不到这条演练动态。')
+    if (!isVisiblePost(post)) return failure('只能评论审核通过且公开的帖子。')
 
     const text = typeof content === 'string' ? content.trim() : ''
     if (!text) return failure('请填写评论内容。')
@@ -682,6 +892,7 @@ export const useCommunityStore = defineStore('community', () => {
       postId,
       author: { ...SYNTHETIC_DEMO_AUTHOR },
       content: text,
+      moderation: 'pending',
       createdAt: nowIso(),
       synthetic: true,
     }
@@ -696,6 +907,8 @@ export const useCommunityStore = defineStore('community', () => {
   function publishPost(input: PublishPostInput): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
     if (!input || typeof input !== 'object') return failure('发布内容无效。')
 
     if (!isOneOf(input.mode, POST_MODES)) return failure('请选择有效的发布模式。')
@@ -780,6 +993,7 @@ export const useCommunityStore = defineStore('community', () => {
       likeCount: 0,
       likedByMe: false,
       favorited: false,
+      moderation: 'pending',
       comments: [],
       ...(mode === 'help' ? { orderStatus: 'open' as const } : {}),
       ...(mode === 'volunteer'
@@ -805,6 +1019,8 @@ export const useCommunityStore = defineStore('community', () => {
       threads: threads.value,
       complaints: complaints.value,
       ledgerEntries: ledgerEntries.value,
+      reports: reports.value,
+      auditLog: auditLog.value,
     })
     return result.ok ? { ...result, id } : result
   }
@@ -812,9 +1028,12 @@ export const useCommunityStore = defineStore('community', () => {
   function acceptOrder(postId: string): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
     const post = posts.value.find((item) => item.id === postId)
     if (!post) return failure('找不到这条演练动态。')
+    if (!isVisiblePost(post)) return failure('只能对审核通过且公开的求助演练单接单。')
     if (post.mode !== 'help') return failure('只有求助演练单可以标记接单。')
     if (post.author.id === SYNTHETIC_DEMO_AUTHOR.id) {
       return failure('不能接自己发布的求助演练单。')
@@ -845,9 +1064,12 @@ export const useCommunityStore = defineStore('community', () => {
   function signUpForEvent(postId: string): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
     const post = posts.value.find((item) => item.id === postId)
     if (!post) return failure('找不到这条演练动态。')
+    if (!isVisiblePost(post)) return failure('只能报名审核通过且公开的志愿活动。')
     if (post.mode !== 'volunteer') return failure('只有志愿动态可以报名。')
     if (post.signedUpByMe) {
       return {
@@ -874,60 +1096,356 @@ export const useCommunityStore = defineStore('community', () => {
       : result
   }
 
+  /**
+   * Free chat stays permanently closed in scheme B. Order messages are the
+   * only member-to-participant channel and they never generate a reply.
+   */
   function sendDemoChatMessage(
-    threadIdOrContent: string,
-    maybeContent?: string,
+    _threadIdOrContent?: string,
+    _maybeContent?: string,
   ): CommunityActionResult {
+    return failure(
+      '自由私聊已关闭；仅可在审核通过、已接单且本人参与的求助订单中留言，且不会产生自动回复或真实投递。',
+    )
+  }
+
+  function sendOrderMessage(postId: string, content: string): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
-    const hasThreadId = maybeContent !== undefined
-    const thread = hasThreadId
-      ? threads.value.find((item) => item.id === threadIdOrContent)
-      : threads.value.find((item) => item.kind === 'chat')
-    if (!thread) return failure('找不到演练聊天。')
-    if (thread.kind !== 'chat') return failure('只能在演练聊天中发送本地消息。')
-
-    const rawContent = hasThreadId ? maybeContent : threadIdOrContent
-    const content = typeof rawContent === 'string' ? rawContent.trim() : ''
-    if (!content) return failure('请填写演练消息。')
-    if (content.length > MAX_CHAT_CHARS) {
-      return failure(`演练消息不能超过 ${MAX_CHAT_CHARS} 个字符。`)
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (post.mode !== 'help') return failure('只有求助演练单可以留言。')
+    if (!isVisiblePost(post)) return failure('只能给审核通过且公开的求助订单留言。')
+    if (post.orderStatus !== 'accepted-local-demo') {
+      return failure('该求助订单尚未在本机演练中接单，暂不能留言。')
     }
-    if (thread.messages.length + 2 > MAX_MESSAGES_PER_THREAD) {
-      return failure('这个演练聊天已达到消息数量上限。')
+    if (!participatesInOrder(post)) {
+      return failure('只有订单作者或本机接单成员可以留言。')
     }
 
-    const usedMessageIds = messages.value.map((message) => message.id)
+    const text = typeof content === 'string' ? content.trim() : ''
+    if (!text) return failure('请填写订单留言。')
+    if (text.length > MAX_MESSAGE_CHARS) {
+      return failure(`订单留言不能超过 ${MAX_MESSAGE_CHARS} 个字符。`)
+    }
+
+    const existingThread = threads.value.find(
+      (item) => item.kind === 'order' && item.postId === post.id,
+    )
+    if (!existingThread && threads.value.length >= MAX_THREADS) return failure('本机订单线程数量已达上限。')
+    const thread: DemoThread = existingThread ?? {
+      id: nextId('SYNTH-THREAD', threads.value.map((item) => item.id)),
+      kind: 'order',
+      postId: post.id,
+      title: post.title,
+      updatedAt: nowIso(),
+      messages: [],
+    }
+    if (thread.messages.length >= MAX_MESSAGES_PER_THREAD) {
+      return failure('这条订单的留言数量已达上限。')
+    }
+
     const createdAt = nowIso()
-    const userMessage: DemoMessage = {
-      id: nextId('SYNTH-MESSAGE', usedMessageIds),
+    const message: DemoMessage = {
+      id: nextId('SYNTH-MESSAGE', messages.value.map((item) => item.id)),
       threadId: thread.id,
       sender: 'demo-user',
-      content,
+      content: text,
       createdAt,
       automaticReply: false,
-      synthetic: true,
-    }
-    const automaticReply: DemoMessage = {
-      id: nextId('SYNTH-MESSAGE', [...usedMessageIds, userMessage.id]),
-      threadId: thread.id,
-      sender: 'synthetic-auto-reply',
-      content: DEMO_CHAT_AUTO_REPLY_NOTICE,
-      createdAt,
-      automaticReply: true,
       synthetic: true,
     }
     const nextThread: DemoThread = {
       ...thread,
       updatedAt: createdAt,
-      messages: [...thread.messages, userMessage, automaticReply],
+      messages: [...thread.messages, message],
+    }
+    const result = persistState({
+      ...withThread(nextThread),
+      threads: existingThread
+        ? threads.value.map((item) => item.id === nextThread.id ? nextThread : item)
+        : [...threads.value, nextThread],
+    })
+    return result.ok ? { ...result, id: message.id } : result
+  }
+
+  function moderatePost(
+    id: string,
+    status: ReviewStatus,
+    reason: string,
+  ): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const reviewerGate = requireReviewer()
+    if (reviewerGate) return reviewerGate
+    if (!isOneOf(status, REVIEW_STATUSES)) return failure('审核结果无效。')
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写审核理由。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`审核理由不能超过 ${MAX_REASON_CHARS} 个字符。`)
     }
 
-    const result = persistState(withThread(nextThread))
-    return result.ok
-      ? { ...result, id: userMessage.id, message: DEMO_CHAT_AUTO_REPLY_NOTICE }
-      : result
+    const post = posts.value.find((item) => item.id === id)
+    if (!post) return failure('找不到这条演练动态。')
+    if ((post.moderation ?? 'pending') === status) {
+      return {
+        ok: true,
+        errors: [],
+        id: post.id,
+        already: true,
+        message: '该动态已是此审核状态，未重复写入审核日志。',
+      }
+    }
+
+    const auditLimit = auditLimitBlocked()
+    if (auditLimit) return auditLimit
+
+    const nextPost: Post = {
+      ...post,
+      moderation: status,
+      reviewNote: reasonText,
+    }
+    const result = persistState({
+      ...withPost(nextPost),
+      auditLog: [...auditLog.value, nextAuditEntry('moderate-post', post.id, reasonText, status)],
+    })
+    return result.ok ? { ...result, id: post.id } : result
+  }
+
+  function moderateComment(
+    postId: string,
+    commentId: string,
+    status: ReviewStatus,
+    reason: string,
+  ): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const reviewerGate = requireReviewer()
+    if (reviewerGate) return reviewerGate
+    if (!isOneOf(status, REVIEW_STATUSES)) return failure('审核结果无效。')
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写审核理由。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`审核理由不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练动态。')
+    const comment = post.comments.find((item) => item.id === commentId)
+    if (!comment || comment.postId !== post.id) return failure('找不到这条演练评论。')
+    if ((comment.moderation ?? 'pending') === status) {
+      return {
+        ok: true,
+        errors: [],
+        id: comment.id,
+        already: true,
+        message: '该评论已是此审核状态，未重复写入审核日志。',
+      }
+    }
+
+    const auditLimit = auditLimitBlocked()
+    if (auditLimit) return auditLimit
+
+    const nextComment: Comment = {
+      ...comment,
+      moderation: status,
+      reviewNote: reasonText,
+    }
+    const nextPost: Post = {
+      ...post,
+      comments: post.comments.map((item) =>
+        item.id === comment.id ? nextComment : item,
+      ),
+    }
+    const result = persistState({
+      ...withPost(nextPost),
+      auditLog: [...auditLog.value, nextAuditEntry('moderate-comment', comment.id, reasonText, status)],
+    })
+    return result.ok ? { ...result, id: comment.id } : result
+  }
+
+  function reportContent(
+    targetType: ReportTargetType,
+    targetId: string,
+    reason: string,
+  ): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+    if (!isOneOf(targetType, REPORT_TARGET_TYPES)) return failure('举报目标类型无效。')
+
+    const normalizedTargetId = typeof targetId === 'string' ? targetId.trim() : ''
+    if (!normalizedTargetId) return failure('请选择要举报的内容。')
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写举报理由。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`举报理由不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+    if (reports.value.length >= MAX_REPORTS) {
+      return failure('本机举报数量已达上限，请先处理已有举报。')
+    }
+
+    if (targetType === 'post') {
+      const post = posts.value.find((item) => item.id === normalizedTargetId)
+      if (!post) return failure('找不到要举报的演练动态。')
+      if (!isVisiblePost(post)) return failure('只能举报审核通过且公开的帖子。')
+    } else if (targetType === 'comment') {
+      let post: Post | undefined
+      let comment: Comment | undefined
+      for (const item of posts.value) {
+        const found = item.comments.find((entry) => entry.id === normalizedTargetId)
+        if (!found) continue
+        post = item
+        comment = found
+        break
+      }
+      if (!post || !comment) return failure('找不到要举报的演练评论。')
+      if (!isVisiblePost(post)) return failure('只能举报审核通过且公开帖子下的评论。')
+      if (comment.moderation !== 'approved') {
+        return failure('只能举报审核通过的评论。')
+      }
+    } else {
+      let thread: DemoThread | undefined
+      let message: DemoMessage | undefined
+      for (const item of threads.value) {
+        const found = item.messages.find((entry) => entry.id === normalizedTargetId)
+        if (!found) continue
+        thread = item
+        message = found
+        break
+      }
+      if (!thread || !message) return failure('找不到要举报的演练留言。')
+      if (message.hidden === true) {
+        return failure('这条订单留言已下架，不能重复举报。')
+      }
+      if (thread.kind !== 'order' || !thread.postId) {
+        return failure('只能举报与审核通过求助订单关联的订单留言。')
+      }
+      const post = posts.value.find((item) => item.id === thread.postId)
+      if (!post || !isVisiblePost(post)) {
+        return failure('只能举报审核通过且公开帖子下的订单留言。')
+      }
+      if (post.mode !== 'help' || post.orderStatus !== 'accepted-local-demo' || !participatesInOrder(post)) {
+        return failure('只能举报本人参与且已接单求助订单的留言。')
+      }
+    }
+
+    const report: Report = {
+      id: nextId('SYNTH-REPORT', reports.value.map((item) => item.id)),
+      targetType,
+      targetId: normalizedTargetId,
+      reason: reasonText,
+      status: 'pending',
+      createdAt: nowIso(),
+      synthetic: true,
+    }
+    const result = persistState({
+      posts: posts.value,
+      threads: threads.value,
+      complaints: complaints.value,
+      ledgerEntries: ledgerEntries.value,
+      reports: [report, ...reports.value],
+      auditLog: auditLog.value,
+    })
+    return result.ok ? { ...result, id: report.id } : result
+  }
+
+  function resolveReport(
+    id: string,
+    status: ReportStatus,
+    reason: string,
+  ): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const reviewerGate = requireReviewer()
+    if (reviewerGate) return reviewerGate
+    if (!isOneOf(status, ['resolved', 'dismissed'] as const)) {
+      return failure('举报处理结果无效。')
+    }
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写举报处理理由。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`处理理由不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+
+    const report = reports.value.find((item) => item.id === id)
+    if (!report) return failure('找不到这条举报记录。')
+    if (report.status !== 'pending') return failure('这条举报已经处理过，不能重复记录。')
+
+    const auditLimit = auditLimitBlocked()
+    if (auditLimit) return auditLimit
+
+    const nextReport: Report = {
+      ...report,
+      status,
+      resolution: reasonText,
+    }
+    const result = persistState({
+      posts: posts.value,
+      threads: threads.value,
+      complaints: complaints.value,
+      ledgerEntries: ledgerEntries.value,
+      reports: reports.value.map((item) => item.id === report.id ? nextReport : item),
+      auditLog: [...auditLog.value, nextAuditEntry('resolve-report', report.id, reasonText, status)],
+    })
+    return result.ok ? { ...result, id: report.id } : result
+  }
+
+  function hideOrderMessage(messageId: string, reason: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const reviewerGate = requireReviewer()
+    if (reviewerGate) return reviewerGate
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写下架理由。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`下架理由不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+
+    let thread: DemoThread | undefined
+    let message: DemoMessage | undefined
+    for (const item of threads.value) {
+      const found = item.messages.find((entry) => entry.id === messageId)
+      if (!found) continue
+      thread = item
+      message = found
+      break
+    }
+    if (!thread || !message) return failure('找不到这条订单留言。')
+    if (thread.kind !== 'order') return failure('只能下架订单留言。')
+    if (message.hidden === true) {
+      return {
+        ok: true,
+        errors: [],
+        id: message.id,
+        already: true,
+        message: '这条订单留言已下架，未重复写入审核日志。',
+      }
+    }
+
+    const auditLimit = auditLimitBlocked()
+    if (auditLimit) return auditLimit
+
+    const hiddenMessageId = message.id
+    const nextThread: DemoThread = {
+      ...thread,
+      messages: thread.messages.map((item) =>
+        item.id === hiddenMessageId ? { ...item, hidden: true, reviewNote: reasonText } : item,
+      ),
+    }
+    const result = persistState({
+      ...withThread(nextThread),
+      auditLog: [...auditLog.value, nextAuditEntry('hide-message', hiddenMessageId, reasonText, 'hidden')],
+    })
+    return result.ok ? { ...result, id: hiddenMessageId } : result
   }
 
   function addComplaint(
@@ -936,6 +1454,8 @@ export const useCommunityStore = defineStore('community', () => {
   ): CommunityActionResult {
     const blocked = blockedByRecovery()
     if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
 
     const complaintInput: NewComplaintInput = typeof input === 'string'
       ? { subject: input, content }
@@ -976,6 +1496,8 @@ export const useCommunityStore = defineStore('community', () => {
       threads: threads.value,
       complaints: [complaint, ...complaints.value],
       ledgerEntries: ledgerEntries.value,
+      reports: reports.value,
+      auditLog: auditLog.value,
     })
     return result.ok
       ? {
@@ -999,8 +1521,12 @@ export const useCommunityStore = defineStore('community', () => {
     threads,
     complaints,
     ledgerEntries,
+    reports,
+    auditLog,
+    membership,
     comments,
     messages,
+    visiblePosts,
     ledger,
     state,
     storageStatus,
@@ -1008,6 +1534,7 @@ export const useCommunityStore = defineStore('community', () => {
     lastSavedAt,
     unreadableStoredData,
     syntheticDataNotice: SYNTHETIC_DATA_NOTICE,
+    setMembership,
     toggleLike,
     toggleFavorite,
     addComment,
@@ -1015,6 +1542,12 @@ export const useCommunityStore = defineStore('community', () => {
     acceptOrder,
     signUpForEvent,
     sendDemoChatMessage,
+    sendOrderMessage,
+    moderatePost,
+    moderateComment,
+    reportContent,
+    resolveReport,
+    hideOrderMessage,
     addComplaint,
     resetDemoData,
     reloadFromStorage,

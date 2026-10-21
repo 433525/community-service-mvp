@@ -49,7 +49,7 @@ function submit() {
     error.value = result.errors.join(' ')
     return
   }
-  emit('toast', form.mode === 'help' ? '求助登记已添加到本机演练数据。' : '内容已添加到本机演练数据。')
+  emit('toast', '已提交本机待审队列；审核通过后才会展示。可在我的发布查看状态。')
   form.title = ''; form.content = ''; form.timeWindow = ''; form.duration = ''; form.specialNote = ''
   form.eventStartsAt = ''; form.eventCapacity = ''; form.anonymous = false; form.publishedToFeed = true
   confirmedSynthetic.value = false
@@ -83,8 +83,8 @@ function submit() {
 
         <label class="confirm-synthetic"><input v-model="confirmedSynthetic" type="checkbox" /><span>我确认以上全部是虚构演练内容，不包含真实居民信息。</span></label>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-        <button class="button-primary submit-button" type="submit" :disabled="!confirmedSynthetic">保存到本机演练数据 <span>↗</span></button>
-        <p class="form-privacy">内容仅保存在此浏览器；不会发布到真实社区、发送消息或产生真实服务记录。</p>
+        <button class="button-primary submit-button" type="submit" :disabled="!confirmedSynthetic">提交审核 <span>↗</span></button>
+        <p class="form-privacy">所有发布先审后发，审核通过且选择公开后才进入社区信息流。内容仅保存在此浏览器；不会发布到真实社区、发送消息或产生真实服务记录。</p>
       </form>
       <aside class="publish-aside"><div class="aside-art"><span class="aside-star">✳</span><div class="aside-orbit"></div><div class="aside-hands">⌂</div><span class="aside-caption">small things<br />make a community</span></div><div class="aside-copy"><span class="soft-label">A NOTE BEFORE YOU POST</span><h3>好的互助，<br />从清楚表达开始。</h3><ul><li><span>01</span>说清楚需要什么帮助</li><li><span>02</span>写下可行的时间范围</li><li><span>03</span>地点和身份都用虚构内容</li></ul><div class="aside-demo-label"><i></i> 本地演示 · 无外部发送</div></div></aside>
     </div>

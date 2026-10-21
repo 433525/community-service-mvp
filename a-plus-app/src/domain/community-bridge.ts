@@ -78,7 +78,7 @@ function parseHelpPost(
   // Non-help posts are irrelevant to the intake bridge. Skip them before
   // validating help-only content so one unrelated malformed post cannot block
   // the operator from reading otherwise valid synthetic help requests.
-  if (value.mode !== 'help') return { post: null, error: null }
+  if (value.mode !== 'help' || value.moderation !== 'approved' || value.publishedToFeed === false) return { post: null, error: null }
   if (!isNonEmptyString(value.id)) {
     return { post: null, error: `社区演练存档第 ${index + 1} 条求助缺少有效 id。` }
   }

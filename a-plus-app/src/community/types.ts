@@ -16,6 +16,36 @@ export const POST_MODE_LABELS: Record<PostMode, string> = {
   neighbor: '邻里',
 }
 
+export const MODERATION_STATUSES = ['pending', 'approved', 'rejected', 'hidden'] as const
+
+export type ModerationStatus = (typeof MODERATION_STATUSES)[number]
+
+/** Reviewers may only publish these three decisions. */
+export const REVIEW_STATUSES = ['approved', 'rejected', 'hidden'] as const
+
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number]
+
+export const MEMBERSHIP_ROLES = ['visitor', 'member', 'reviewer'] as const
+
+export type MembershipRole = (typeof MEMBERSHIP_ROLES)[number]
+
+export const REPORT_TARGET_TYPES = ['post', 'comment', 'message'] as const
+
+export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
+
+export const REPORT_STATUSES = ['pending', 'resolved', 'dismissed'] as const
+
+export type ReportStatus = (typeof REPORT_STATUSES)[number]
+
+export const AUDIT_ACTIONS = [
+  'moderate-post',
+  'moderate-comment',
+  'resolve-report',
+  'hide-message',
+] as const
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[number]
+
 export const DEMO_THREAD_KINDS = ['system', 'order', 'chat'] as const
 
 export type DemoThreadKind = (typeof DEMO_THREAD_KINDS)[number]
@@ -70,6 +100,10 @@ export interface Comment {
   readonly postId: string
   readonly author: FictionalAuthor
   readonly content: string
+  /** Legacy comments without a value are normalized to pending by the store. */
+  readonly moderation?: ModerationStatus
+  /** Reviewer-only note; review never rewrites comment content. */
+  readonly reviewNote?: string
   readonly createdAt: string
   readonly synthetic: true
 }
@@ -87,6 +121,10 @@ export interface Post {
   readonly volunteerKind?: VolunteerPostKind
   readonly anonymous?: boolean
   readonly publishedToFeed?: boolean
+  /** Legacy posts without a value are normalized to pending by the store. */
+  readonly moderation?: ModerationStatus
+  /** Reviewer-only note; review never rewrites post body fields. */
+  readonly reviewNote?: string
   readonly author: FictionalAuthor
   /** Coarse, fictional demo location only. */
   readonly location: string
@@ -115,6 +153,10 @@ export interface DemoMessage {
   readonly createdAt: string
   /** Automatic replies are generated locally and must stay visibly synthetic. */
   readonly automaticReply: boolean
+  /** Reviewer-only removal from order threads; legacy messages simply omit it. */
+  readonly hidden?: boolean
+  /** Reviewer-only note; review never rewrites message content. */
+  readonly reviewNote?: string
   readonly synthetic: true
 }
 
@@ -122,8 +164,31 @@ export interface DemoThread {
   readonly id: string
   readonly kind: DemoThreadKind
   readonly title: string
+  /** Order threads are tied to the local demo help post they discuss. */
+  readonly postId?: string
   readonly updatedAt: string
   readonly messages: DemoMessage[]
+}
+
+export interface Report {
+  readonly id: string
+  readonly targetType: ReportTargetType
+  readonly targetId: string
+  readonly reason: string
+  readonly status: ReportStatus
+  readonly resolution?: string
+  readonly createdAt: string
+  readonly synthetic: true
+}
+
+export interface AuditLogEntry {
+  readonly id: string
+  readonly action: AuditAction
+  readonly targetId: string
+  readonly reason: string
+  readonly decision?: ModerationStatus | ReportStatus
+  readonly createdAt: string
+  readonly synthetic: true
 }
 
 export interface Complaint {
@@ -152,6 +217,10 @@ export interface CommunityState {
   threads: DemoThread[]
   complaints: Complaint[]
   ledgerEntries: LedgerEntry[]
+  /** Optional so archives created before controlled-community support still load. */
+  reports?: Report[]
+  /** Optional so archives created before controlled-community support still load. */
+  auditLog?: AuditLogEntry[]
 }
 
 export interface PublishPostInput {
