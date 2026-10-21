@@ -47,6 +47,8 @@ import { resolveIntakeSourceLink } from './community/intake-progress'
 
 const store = useIntakeStore()
 const backupInput = ref<HTMLInputElement | null>(null)
+const backupText = ref('')
+const backupTextInput = ref<HTMLTextAreaElement | null>(null)
 const search = ref('')
 const activeFilter = ref('全部记录')
 const showCreate = ref(false)
@@ -451,8 +453,17 @@ function downloadTextFile(filename: string, content: string, type = 'application
 function exportBackup() {
   try {
     downloadTextFile(`a-plus-synthetic-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportBackup())
-    notify('已导出演练备份；请将文件保存在受控位置')
+    notify('已请求下载；请确认文件已保存，未下载时可查看备份文本')
   } catch {
+    notify('当前演练数据超过备份容量上限；请先减少记录或时间线内容')
+  }
+}
+
+function viewBackupText() {
+  try {
+    backupText.value = store.exportBackup()
+  } catch {
+    backupText.value = ''
     notify('当前演练数据超过备份容量上限；请先减少记录或时间线内容')
   }
 }
@@ -1120,12 +1131,25 @@ function resetDemo() {
           </div>
           <div class="banner-actions">
             <button class="button small" type="button" @click="exportBackup">导出备份</button>
+            <button class="button small" type="button" @click="viewBackupText">查看备份文本</button>
             <button class="button small" type="button" @click="chooseBackup">导入备份</button>
             <button v-if="store.storageStatus === 'conflict'" class="button small" type="button" @click="reloadLatestSnapshot">重新载入最新存档</button>
             <button v-if="store.storageStatus === 'recovery-required'" class="button small" type="button" @click="exportUnreadableBackup">下载无法读取的旧存档</button>
             <button class="button small danger" type="button" @click="resetDemo">重置演练</button>
           </div>
         </div>
+
+        <section v-if="backupText" class="panel" aria-label="合成备份文本">
+          <div class="panel-head">
+            <h2 class="panel-title">合成备份文本</h2>
+            <button class="button small" type="button" @click="backupText = ''">关闭备份文本</button>
+          </div>
+          <div class="field">
+            <label for="backup-text">打开时生成的完整 JSON 快照（只读）</label>
+            <textarea id="backup-text" ref="backupTextInput" :value="backupText" readonly :spellcheck="false" rows="8" @focus="backupTextInput?.select()" />
+            <p class="notice-inline">点击文本框全选后复制，粘贴到记事本，以 UTF-8 保存为 .json 文件。请保留完整内容，之后可使用“导入备份”恢复；保存后关闭此区域。若记录有更新，请重新点击“查看备份文本”。</p>
+          </div>
+        </section>
 
         <section class="metric-grid" aria-label="演练统计">
           <article class="metric-card">
