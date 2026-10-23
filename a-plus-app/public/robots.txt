@@ -1,0 +1,5 @@
+# 本机合成数据演练原型：整站面向内部验收，不对外发布，因此禁止一切爬虫抓取与收录。
+# 说明：robots.txt 只是第一道闸门（部分爬虫不遵守），真正的锁是两个入口页里的
+#      <meta name="robots" content="noindex,nofollow">，见 docs/部署说明-2026-10-22.md。
+User-agent: *
+Disallow: /

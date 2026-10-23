@@ -42,9 +42,18 @@ export const AUDIT_ACTIONS = [
   'moderate-comment',
   'resolve-report',
   'hide-message',
+  'create-report',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
+
+export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
+  'moderate-post': '审核发布',
+  'moderate-comment': '审核评论',
+  'resolve-report': '处理举报',
+  'hide-message': '下架订单留言',
+  'create-report': '提交举报',
+}
 
 export const DEMO_THREAD_KINDS = ['system', 'order', 'chat'] as const
 
@@ -63,11 +72,96 @@ export const DEMO_MESSAGE_SENDERS = [
   'synthetic-auto-reply',
 ] as const
 
+/** Local notice classification used only by the messages view. */
+export const NOTICE_KINDS = ['moderation', 'order', 'report', 'message', 'system'] as const
+
+export type NoticeKind = (typeof NOTICE_KINDS)[number]
+
+export const NOTICE_KIND_LABELS: Record<NoticeKind, string> = {
+  moderation: '审核',
+  order: '订单',
+  report: '举报',
+  message: '留言',
+  system: '其他',
+}
+
 export type DemoMessageSender = (typeof DEMO_MESSAGE_SENDERS)[number]
 
-export const ORDER_STATUSES = ['open', 'accepted-local-demo'] as const
+export const ORDER_STATUSES = [
+  'open',
+  'accepted-local-demo',
+  'completion-requested',
+  'completed-local-demo',
+  'cancelled-local-demo',
+  'disputed-local-demo',
+] as const
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
+
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  open: '待接单（本机演练）',
+  'accepted-local-demo': '已接单（本机演练）',
+  'completion-requested': '待确认完成（本机演练）',
+  'completed-local-demo': '已完成（本机演练，未结算）',
+  'cancelled-local-demo': '已取消/关闭（本机演练）',
+  'disputed-local-demo': '争议处理中（本机演练）',
+}
+
+/** Statuses in which the local demo still treats the order as active. */
+export const ACTIVE_ORDER_STATUSES = [
+  'accepted-local-demo',
+  'completion-requested',
+  'disputed-local-demo',
+] as const
+
+/** Hard cap for a single order timeline; the store refuses writes above it. */
+export const ORDER_EVENT_LIMIT = 100
+
+export const ORDER_EVENT_TYPES = [
+  'accept',
+  'request-completion',
+  'confirm-completion',
+  'cancel',
+  'dispute',
+  'resume-after-dispute',
+  'close-after-dispute',
+] as const
+
+export type OrderEventType = (typeof ORDER_EVENT_TYPES)[number]
+
+export const ORDER_EVENT_ACTORS = ['demo-side', 'synthetic-counterpart', 'reviewer'] as const
+
+export type OrderEventActor = (typeof ORDER_EVENT_ACTORS)[number]
+
+export const ORDER_EVENT_LABELS: Record<OrderEventType, string> = {
+  accept: '标记接单',
+  'request-completion': '发起完成申请',
+  'confirm-completion': '确认完成',
+  cancel: '取消/关闭订单',
+  dispute: '发起争议',
+  'resume-after-dispute': '撤销争议并继续履约',
+  'close-after-dispute': '因争议关闭订单',
+}
+
+export const ORDER_EVENT_ACTOR_LABELS: Record<OrderEventActor, string> = {
+  'demo-side': '本机参与者',
+  'synthetic-counterpart': '合成对方（代记录）',
+  reviewer: '审核员（内容下架）',
+}
+
+/**
+ * One local demo step in a help-order lifecycle. These events are the
+ * traceable substitute for real fulfillment records; they never mean a real
+ * order, dispatch, completion or settlement happened.
+ */
+export interface OrderEvent {
+  readonly id: string
+  readonly type: OrderEventType
+  readonly actor: OrderEventActor
+  readonly note: string
+  readonly createdAt: string
+  readonly synthetic: true
+}
 
 export const COMPLAINT_STATUS = 'local-only' as const
 
@@ -108,6 +202,13 @@ export interface Comment {
   readonly synthetic: true
 }
 
+export interface OrderFeedback {
+  readonly rating: number
+  readonly note: string
+  readonly createdAt: string
+  readonly synthetic: true
+}
+
 export interface Post {
   readonly id: string
   readonly mode: PostMode
@@ -142,6 +243,10 @@ export interface Post {
   readonly orderStatus?: OrderStatus
   /** Identifies that the current synthetic demo user accepted this help post. */
   readonly acceptedByMe?: boolean
+  /** Local demo fulfilment trace. Legacy archives may omit it entirely. */
+  readonly orderEvents?: OrderEvent[]
+  /** Local-only experience note for a completed demo order. */
+  readonly orderFeedback?: OrderFeedback
   readonly synthetic: true
 }
 
@@ -157,6 +262,8 @@ export interface DemoMessage {
   readonly hidden?: boolean
   /** Reviewer-only note; review never rewrites message content. */
   readonly reviewNote?: string
+  /** System notice category; legacy notices omit it and are classified by text. */
+  readonly noticeKind?: NoticeKind
   readonly synthetic: true
 }
 
@@ -177,6 +284,8 @@ export interface Report {
   readonly reason: string
   readonly status: ReportStatus
   readonly resolution?: string
+  /** Legacy reports may omit the reporter; the UI must not invent one. */
+  readonly reporter?: FictionalAuthor
   readonly createdAt: string
   readonly synthetic: true
 }
@@ -221,6 +330,8 @@ export interface CommunityState {
   reports?: Report[]
   /** Optional so archives created before controlled-community support still load. */
   auditLog?: AuditLogEntry[]
+  /** Latest time the local demo user marked system notices as read. */
+  notificationsReadAt?: string
 }
 
 export interface PublishPostInput {
@@ -264,6 +375,12 @@ export const DEMO_CHAT_AUTO_REPLY_NOTICE =
 
 export const ORDER_LOCAL_DEMO_NOTICE =
   '已在本地演练中标记接单；不会产生真实接单、派单、通知或履约。'
+
+export const ORDER_FULFILLMENT_LOCAL_NOTICE =
+  '订单状态只在当前浏览器演练数据中保存；申请完成、确认完成、取消或争议都不代表真实履约、真实双方确认或任何结算。'
+
+export const ORDER_COUNTERPART_NOTICE =
+  '合成对方动作仅用于补齐本机双人流程演示；没有任何真实居民参与，也不会发送通知。'
 
 export const EVENT_LOCAL_DEMO_NOTICE =
   '报名只记录在当前浏览器演练数据中；不会产生真实报名、通知或活动安排。'

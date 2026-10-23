@@ -488,6 +488,12 @@ export const useIntakeStore = defineStore('intake', () => {
     if (!isSyntheticSourceChannel(input.sourceChannel)) {
       return { ok: false, errors: ['请选择来源渠道演练标记。'] }
     }
+    if (input.sourceChannel === 'community-entry-local' && !sourcePostId) {
+      return { ok: false, errors: ['选择“社区入口演练（仅本机）”时必须关联社区帖子 ID；没有来源帖子请改选人工录入演练。'] }
+    }
+    if (sourcePostId && input.sourceChannel !== 'community-entry-local') {
+      return { ok: false, errors: ['社区来源帖子 ID 只适用于“社区入口演练（仅本机）”来源。'] }
+    }
     const dueAt = localDateTimeToIso(input.dueAt)
     if (hasInvalidLocalDateTime(input.dueAt)) {
       return { ok: false, errors: ['请填写有效的跟进截止时间。'] }

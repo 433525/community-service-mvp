@@ -1,0 +1,34 @@
+/* 11 · 审核 -------------------------------------------------------------- */
+.moderation-page .publish-heading h1 { font-size: var(--fs-xl); }
+.moderation-workbench { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.workbench-tile {
+  display: grid; gap: 2px; padding: 14px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  color: inherit; background: var(--surface); text-align: left;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.workbench-tile:hover { border-color: #b8d2bd; background: #f8fcf6; }
+.workbench-tile strong { color: var(--brand-dark); font-size: 28px; font-variant-numeric: tabular-nums; line-height: 1; }
+.workbench-tile span { color: #3c5445; font-size: var(--fs-sm); font-weight: 700; }
+.workbench-tile small { color: var(--faint); font-size: var(--fs-xs); }
+.moderation-filter-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 13px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm);
+  color: var(--muted); background: #fbfcf8; font-size: var(--fs-xs);
+}
+.moderation-filter-bar .button-ghost { min-height: 36px; font-size: var(--fs-xs); }
+.moderation-search-row { display: grid; gap: 5px; }
+.moderation-search-row small { color: var(--faint); font-size: var(--fs-xs); }
+.moderation-reason { padding: 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.moderation-page > h2 { margin-top: 8px; color: var(--ink-strong); font-size: var(--fs-lg); }
+.moderation-section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.moderation-section-head h2 { color: var(--ink-strong); font-size: var(--fs-lg); }
+.moderation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.moderation-actions button { min-height: 42px; padding: 0 14px; font-size: var(--fs-sm); }
+.moderation-content-list, .moderation-comment-list, .moderation-report-list,
+.moderation-message-list, .moderation-audit-list { display: grid; gap: 9px; }
+.moderation-badge { color: var(--muted); font-size: var(--fs-xs); }
+.moderation-page .feedback-card { overflow-wrap: anywhere; }
+.moderation-page .feedback-card p { font-size: var(--fs-sm); }
+.moderation-filter, .compact-filter { gap: 6px; }
+

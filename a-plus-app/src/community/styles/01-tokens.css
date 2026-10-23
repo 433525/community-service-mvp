@@ -1,0 +1,72 @@
+/* 1 · 令牌 --------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  --ink: #182a22;
+  --ink-strong: #101f18;
+  --body: #33463b;
+  --muted: #55665b;
+  --faint: #657469;
+  --line: #e3e5da;
+  --line-strong: #ccd2c3;
+  --paper: #fcfbf5;
+  --surface: #ffffff;
+  --surface-soft: #f5f4ec;
+  --brand: #2b6249;
+  --brand-dark: #1e4634;
+  --brand-soft: #e9f1e8;
+  --accent: #98522e;
+  --accent-soft: #f7e8dc;
+  --blue: #3f6c75;
+  --blue-soft: #e6eff1;
+  --sand: #faf3e3;
+
+  --fs-xs: 13px;
+  --fs-sm: 14px;
+  --fs-base: 16px;
+  --fs-md: 17px;
+  --fs-lg: 20px;
+  --fs-xl: 26px;
+  --fs-2xl: 34px;
+  --fs-display: clamp(32px, 3.6vw, 44px);
+  /* 兼容别名：旧令牌继续指向新阶梯，便于渐进迁移 */
+  --text-body: var(--fs-base);
+  --text-small: var(--fs-sm);
+  --text-title: var(--fs-lg);
+  --tap-min: var(--tap);
+  --lh-body: 1.75;
+  --lh-tight: 1.3;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --tap: 44px;
+  --topbar-h: 68px;
+
+  --shadow-sm: 0 1px 2px rgb(24 42 34 / 4%), 0 6px 18px rgb(24 42 34 / 4%);
+  --shadow-md: 0 14px 34px rgb(24 42 34 / 8%);
+  /* 离线 / 更新提示条：与 toast 同色系，两入口共用组件靠这两个变量换肤 */
+  --offline-bg: #1d4532;
+  --offline-border: #28533e;
+  --shadow-lg: 0 28px 70px rgb(16 31 24 / 22%);
+  --ease: cubic-bezier(.22, .61, .36, 1);
+  --dur: .18s;
+
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+

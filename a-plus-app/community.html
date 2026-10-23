@@ -2,13 +2,32 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f5ef" />
-    <meta name="description" content="社区服务本地合成数据原型" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#fcfbf5" />
+    <meta name="color-scheme" content="light" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="description" content="邻里社区：受控社区服务演练原型，仅含合成数据，数据只保存在当前浏览器" />
     <title>邻里 · 社区服务演练版</title>
   </head>
   <body>
     <div id="app"></div>
+    <noscript>
+      <div style="display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px;background:#fcfbf5;color:#1f2f22;font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;">
+        <div style="width:100%;max-width:560px;padding:30px 28px;border:1px solid #e2e0d2;border-radius:20px;background:#fff;box-shadow:0 14px 36px rgb(46 62 44 / 9%);">
+          <div style="display:flex;align-items:center;gap:12px;margin:0 0 18px;">
+            <span style="display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#3f6b4f;color:#f7f4e8;font-size:16px;font-weight:700;">邻</span>
+            <span style="font-size:12px;font-weight:600;letter-spacing:.14em;color:#5b7a63;">社区服务空间 · COMMUNITY</span>
+          </div>
+          <h1 style="margin:0 0 12px;font-size:23px;line-height:1.35;letter-spacing:-.01em;">需要启用 JavaScript 才能继续</h1>
+          <p style="margin:0 0 10px;font-size:15px;line-height:1.75;color:#40503f;">本页是纯本地渲染的合成数据演练原型，界面由脚本生成。当前浏览器禁用了脚本，或版本过旧无法加载 ES 模块。</p>
+          <p style="margin:0 0 18px;font-size:15px;line-height:1.75;color:#40503f;">请在浏览器设置中启用 JavaScript 后重新载入；若仍无法打开，请改用最新版 Chrome、Edge、Safari 或 Firefox。</p>
+          <a href="/community.html" style="display:inline-flex;min-height:44px;align-items:center;padding:0 20px;border:1px solid #cfd6c4;border-radius:999px;color:#33513f;background:#f7f8ef;font-size:14px;font-weight:600;text-decoration:none;">启用后重新载入</a>
+          <p style="margin:18px 0 0;padding-top:14px;border-top:1px solid #eceae0;font-size:13px;line-height:1.7;color:#6b7768;">本页不含真实居民数据，也不发送任何通知。需要进入内部受理演练，请打开 <a href="/" style="color:#3f6b4f;">受理工作台</a>。</p>
+        </div>
+      </div>
+    </noscript>
     <script type="module" src="/src/community/main.ts"></script>
   </body>
 </html>

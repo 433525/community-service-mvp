@@ -1,0 +1,19 @@
+/* 13 · 大字模式（只放大字号与点击区，不改布局） --------------------------- */
+.reading-large {
+  --fs-xs: 15px;
+  --fs-sm: 16px;
+  --fs-base: 18px;
+  --fs-md: 20px;
+  --fs-lg: 23px;
+  --fs-xl: 30px;
+  --fs-2xl: 38px;
+  --fs-display: clamp(34px, 4vw, 48px);
+  --lh-body: 1.9;
+}
+.reading-large .nav-item { min-height: 54px; }
+.reading-large { --topbar-h: 76px; }
+.reading-large .brand-copy strong { font-size: var(--fs-lg); }
+.reading-large .post-title { font-size: var(--fs-lg); }
+.reading-large .post-content { font-size: var(--fs-base); }
+.reading-large .mobile-nav button { min-height: 74px; font-size: var(--fs-xs); }
+

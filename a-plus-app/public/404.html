@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>页面不存在（404）· A+ 合成数据演练原型</title>
+    <!-- 单文件兜底页：不引用 /assets/*、字体或 CDN，样式全部内联，
+         避免在子路径部署或构建产物缺失时，404 页自身资源再次 404。 -->
+    <style>
+      :root {
+        --ink: #182a22;
+        --body: #33463b;
+        --muted: #55665b;
+        --line: #e3e5da;
+        --paper: #fcfbf5;
+        --surface: #ffffff;
+        --brand: #2b6249;
+        --brand-dark: #1e4634;
+        --brand-soft: #e9f1e8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--paper);
+        color: var(--body);
+        font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.75;
+      }
+      main {
+        width: 100%;
+        max-width: 34rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 32px 28px;
+        box-shadow: 0 1px 2px rgb(24 42 34 / 4%), 0 14px 34px rgb(24 42 34 / 8%);
+      }
+      .tag {
+        display: inline-block;
+        margin: 0 0 12px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--brand-soft);
+        color: var(--brand-dark);
+        font-size: 13px;
+        letter-spacing: .04em;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 26px;
+        line-height: 1.35;
+        color: var(--ink);
+      }
+      p { margin: 0 0 12px; }
+      .muted { color: var(--muted); font-size: 14px; }
+      nav { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+      a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 10px 20px;
+        border-radius: 12px;
+        border: 1px solid var(--brand);
+        color: var(--brand-dark);
+        background: var(--surface);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      a.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+      a:hover { background: var(--brand-soft); }
+      a.primary:hover { background: var(--brand-dark); }
+      a:focus-visible { outline: 3px solid #3f6c75; outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="tag">404 · 页面不存在</p>
+      <h1>没有找到这个地址</h1>
+      <p>
+        你要访问的路径不在本机合成数据演练原型里。可能是链接写错了，
+        也可能是这一版还没有这个页面。
+      </p>
+      <p class="muted">
+        本原型所有数据均为合成的演练数据，只保存在当前浏览器（localStorage），
+        不连接真实服务、不含真实个人信息，不面向公众开放。
+      </p>
+      <nav>
+        <a class="primary" href="/">返回 A+ 工作台</a>
+        <a href="/community.html">进入邻里社区演练</a>
+      </nav>
+    </main>
+  </body>
+</html>

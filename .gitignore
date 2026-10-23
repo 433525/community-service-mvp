@@ -1,0 +1,21 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# 编辑器与本机配置
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+
+# 本机验收截图与证据（体积大、含本机绝对路径，不入库）
+a-plus-app/.survey/
+docs/运营准备/evidence*/
+docs/运营准备/*.png
+交付/
+
+# 日志
+*.log

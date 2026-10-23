@@ -1,4 +1,5 @@
 import {
+  COMPLAINT_REVIEWER_ROLES,
   COMPLAINT_STATUSES,
   CONSENT_STATUSES,
   CONTACT_SIMULATION_OUTCOMES,
@@ -327,10 +328,14 @@ export function parseIntakeBackup(raw: string): IntakeBackupResult {
         errors.push(`社区来源帖子 ID 重复：${item.sourcePostId}。`)
       }
       sourcePostIds.add(item.sourcePostId)
+      if (item.sourceChannel !== undefined && item.sourceChannel !== 'community-entry-local') {
+        errors.push(`${item.id}：社区来源帖子 ID 只适用于“社区入口演练（仅本机）”来源。`)
+      }
     }
     try {
       const validation = validateIntakeCase(item)
       if (!validation.ok) errors.push(...validation.errors.map((error) => `${item.id}：${error}`))
+      if (!item.summary.trim()) errors.push(`${item.id}：演练摘要不能为空。`)
     } catch {
       errors.push(`记录 ${item.id} 无法安全校验。`)
     }
@@ -346,6 +351,14 @@ export function parseIntakeBackup(raw: string): IntakeBackupResult {
     const validation = validateComplaint(complaint, [...caseIds])
     if (!validation.ok) {
       errors.push(...validation.errors.map((error) => `${complaint.id}：${error}`))
+    }
+    if (complaint.status === '待复核') {
+      const availableReviewers = COMPLAINT_REVIEWER_ROLES.filter(
+        (role) => role !== complaint.submittedByRole && role !== complaint.targetRole,
+      )
+      if (!availableReviewers.length) {
+        errors.push(`${complaint.id}：该投诉组合没有可用复核角色，无法导入。`)
+      }
     }
   }
 

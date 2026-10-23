@@ -1,14 +1,17 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
-import 'vant/lib/style/css-variables.css'
-import 'vant/lib/style/normalize.css'
-import 'vant/lib/style/base.css'
-import 'vant/lib/style/animation.css'
-import 'vant/lib/overlay/index.css'
-import 'vant/lib/popup/index.css'
-import 'vant/lib/button/index.css'
-import 'vant/lib/dialog/index.css'
+import { installChunkRecovery } from '../shared/chunk-recovery'
+import { installErrorReporting } from '../shared/error-reporting'
+import { installOfflineSupport } from '../shared/offline'
+import { vTablist } from '../shared/tablist'
 import './style.css'
 
-createApp(App).use(createPinia()).mount('#app')
+installChunkRecovery()
+installOfflineSupport()
+
+const app = createApp(App)
+app.use(createPinia())
+app.directive('tablist', vTablist)
+installErrorReporting(app, 'community')
+app.mount('#app')

@@ -6,15 +6,15 @@ import {
   COMMUNITY_STORAGE_KEY,
   COMMUNITY_STORAGE_SCHEMA_VERSION,
 } from '../community/storage'
+import { ORDER_STATUSES, type OrderStatus } from '../community/types'
 
 const MAX_STORED_CHARS = 1_000_000
 const MAX_INTAKE_SUMMARY_CHARS = 240
 const POST_MODES = ['help', 'volunteer', 'neighbor'] as const
-const HELP_ORDER_STATUSES = ['open', 'accepted-local-demo'] as const
 
 export interface CommunityHelpPost {
   readonly id: string
-  readonly orderStatus: (typeof HELP_ORDER_STATUSES)[number]
+  readonly orderStatus: OrderStatus
   readonly title: string
   readonly content: string
   readonly category: string
@@ -36,6 +36,8 @@ export type CommunityHelpReadResult =
   | {
       readonly status: 'ready'
       readonly posts: readonly CommunityHelpPost[]
+      /** Posts skipped because their stored shape was invalid; originals stay untouched. */
+      readonly warnings: readonly string[]
       readonly savedAt: string
     }
   | { readonly status: 'missing'; readonly message: string }
@@ -92,7 +94,7 @@ function parseHelpPost(
   if (value.synthetic !== true) {
     return { post: null, error: `社区演练存档第 ${index + 1} 条求助缺少合成数据标记。` }
   }
-  if (!isOneOf(value.orderStatus, HELP_ORDER_STATUSES)) {
+  if (!isOneOf(value.orderStatus, ORDER_STATUSES)) {
     return { post: null, error: `社区演练存档第 ${index + 1} 条求助的登记状态无效。` }
   }
 
@@ -190,27 +192,27 @@ export function readCommunityHelpPosts(): CommunityHelpReadResult {
   }
 
   const posts: CommunityHelpPost[] = []
+  const warnings: string[] = []
   const seenIds = new Set<string>()
   for (const [index, item] of value.state.posts.entries()) {
     const parsed = parseHelpPost(item, index)
     if (parsed.error) {
-      return {
-        status: 'error',
-        message: `${parsed.error}已停止读取。未创建任何记录，也未修改社区存档。`,
-      }
+      // One malformed post must not block the operator from reading the rest.
+      // The original archive stays untouched and the skipped entries are
+      // surfaced as warnings in the A+ panel.
+      warnings.push(parsed.error)
+      continue
     }
     if (!parsed.post) continue
     if (seenIds.has(parsed.post.id)) {
-      return {
-        status: 'error',
-        message: `社区演练存档中的帖子 ID 重复：${parsed.post.id}。已停止读取，未创建任何记录，也未修改社区存档。`,
-      }
+      warnings.push(`社区演练存档中的帖子 ID 重复：${parsed.post.id}；已跳过重复项。`)
+      continue
     }
     seenIds.add(parsed.post.id)
     posts.push(parsed.post)
   }
 
-  return { status: 'ready', posts, savedAt: value.savedAt }
+  return { status: 'ready', posts, warnings, savedAt: value.savedAt }
 }
 
 /** Stable, side-effect-free mapping: the post ID is the source of truth. */

@@ -256,7 +256,8 @@ const ACTION_DEFINITIONS: Record<IntakeAction, ActionDefinition> = {
     requiresReason: false,
   },
   ACCEPT_FOR_TRIAGE: {
-    from: ['初筛中'],
+    // 补充信息已记录后，可直接进入待分诊。
+    from: ['初筛中', '已提供信息'],
     to: '已受理待分诊',
     requiresReason: false,
   },
@@ -513,6 +514,16 @@ export function createComplaintRecord(input: ComplaintSubmissionInput): Complain
   }
   const validation = validateComplaint(complaint)
   if (!validation.ok) return { ok: false, errors: validation.errors, complaint: null }
+  const availableReviewers = COMPLAINT_REVIEWER_ROLES.filter(
+    (role) => role !== complaint.submittedByRole && role !== complaint.targetRole,
+  )
+  if (!availableReviewers.length) {
+    return {
+      ok: false,
+      errors: ['该投诉组合没有可用的复核角色（需要 demo-review 或 demo-referral，且不能是提交人或被投诉角色）。请调整投诉对象或切换提交角色后再试。'],
+      complaint: null,
+    }
+  }
   return { ok: true, errors: [], complaint }
 }
 

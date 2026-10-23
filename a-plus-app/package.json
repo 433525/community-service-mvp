@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:budget": "node tools/check-budget.mjs",
+    "check:vitals": "node tools/check-web-vitals.mjs",
+    "test:unit": "node --experimental-strip-types --import ./tools/unit/ts-extension-hook.mjs --test tools/unit/intake.test.mjs tools/unit/intake-backup.test.mjs tools/unit/presentation.test.mjs tools/unit/banner.test.mjs tools/unit/chunk-recovery.test.mjs tools/unit/web-vitals.test.mjs tools/unit/offline.test.mjs tools/unit/cache-expiration.test.mjs",
+    "check:offline": "node tools/check-offline.mjs"
   },
   "dependencies": {
     "pinia": "^4.1.0",
-    "vant": "^4.10.2",
     "vue": "^3.5.44"
   },
   "devDependencies": {

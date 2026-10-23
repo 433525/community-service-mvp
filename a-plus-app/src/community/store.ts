@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
+  ACTIVE_ORDER_STATUSES,
   AUDIT_ACTIONS,
   COMPLAINT_LOCAL_ONLY_NOTICE,
   COMPLAINT_STATUS,
@@ -10,6 +11,12 @@ import {
   LEDGER_ENTRY_STATUS,
   MEMBERSHIP_ROLES,
   MODERATION_STATUSES,
+  NOTICE_KINDS,
+  ORDER_COUNTERPART_NOTICE,
+  ORDER_EVENT_ACTORS,
+  ORDER_EVENT_LIMIT,
+  ORDER_EVENT_TYPES,
+  ORDER_FULFILLMENT_LOCAL_NOTICE,
   ORDER_LOCAL_DEMO_NOTICE,
   ORDER_STATUSES,
   POST_MODES,
@@ -31,6 +38,10 @@ import {
   type LedgerEntry,
   type MembershipRole,
   type NewComplaintInput,
+  type NoticeKind,
+  type OrderEvent,
+  type OrderEventActor,
+  type OrderEventType,
   type Post,
   type PostMode,
   type PublishPostInput,
@@ -68,6 +79,7 @@ const MAX_COMPLAINTS = 200
 const MAX_LEDGER_ENTRIES = 200
 const MAX_REPORTS = 200
 const MAX_AUDIT_LOG = 500
+const MAX_ORDER_EVENTS = ORDER_EVENT_LIMIT
 const MAX_TITLE_CHARS = 120
 const MAX_LOCATION_CHARS = 120
 const MAX_CONTENT_CHARS = 2_000
@@ -156,6 +168,17 @@ function isComment(value: unknown): value is Comment {
   return true
 }
 
+function isOrderEvent(value: unknown): value is OrderEvent {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && isOneOf(value.type, ORDER_EVENT_TYPES)
+    && isOneOf(value.actor, ORDER_EVENT_ACTORS)
+    && isNonEmptyString(value.note)
+    && value.note.length <= MAX_DETAIL_CHARS
+    && isTimestamp(value.createdAt)
+    && value.synthetic === true
+}
+
 function isPost(value: unknown): value is Post {
   if (!isRecord(value)) return false
   if (
@@ -201,7 +224,36 @@ function isPost(value: unknown): value is Post {
     if (
       mode !== 'help'
       || typeof value.acceptedByMe !== 'boolean'
-      || (value.acceptedByMe && value.orderStatus !== 'accepted-local-demo')
+      || (value.acceptedByMe && value.orderStatus === 'open')
+    ) return false
+  }
+  if (value.orderEvents !== undefined) {
+    if (
+      mode !== 'help'
+      || !Array.isArray(value.orderEvents)
+      || value.orderEvents.length > MAX_ORDER_EVENTS
+    ) return false
+    const eventIds = new Set<string>()
+    for (const event of value.orderEvents) {
+      if (!isOrderEvent(event) || eventIds.has(event.id)) return false
+      eventIds.add(event.id)
+    }
+  }
+
+  if (value.orderFeedback !== undefined) {
+    const feedback = value.orderFeedback
+    if (
+      mode !== 'help'
+      || value.orderStatus !== 'completed-local-demo'
+      || !isRecord(feedback)
+      || typeof feedback.rating !== 'number'
+      || !Number.isInteger(feedback.rating)
+      || feedback.rating < 1
+      || feedback.rating > 5
+      || typeof feedback.note !== 'string'
+      || feedback.note.length > MAX_REASON_CHARS
+      || !isTimestamp(feedback.createdAt)
+      || feedback.synthetic !== true
     ) return false
   }
 
@@ -237,6 +289,7 @@ function isDemoMessage(value: unknown): value is DemoMessage {
     || typeof value.automaticReply !== 'boolean'
     || (value.hidden !== undefined && typeof value.hidden !== 'boolean')
     || !isOptionalReviewNote(value.reviewNote)
+    || (value.noticeKind !== undefined && !isOneOf(value.noticeKind, NOTICE_KINDS))
     || value.synthetic !== true
   ) return false
   if (value.sender === 'synthetic-auto-reply' && value.automaticReply !== true) return false
@@ -294,6 +347,7 @@ function isReport(value: unknown): value is Report {
     || !isNonEmptyString(value.reason)
     || value.reason.length > MAX_REASON_CHARS
     || !isOneOf(value.status, REPORT_STATUSES)
+    || (value.reporter !== undefined && !isFictionalAuthor(value.reporter))
     || !isTimestamp(value.createdAt)
     || value.synthetic !== true
   ) return false
@@ -320,9 +374,32 @@ function normalizeComment(comment: Comment): Comment {
 }
 
 function normalizePost(post: Post): Post {
+  let orderStatus = post.orderStatus
+  let orderEvents = post.orderEvents
+  // Legacy archives could contain a hidden help post whose order was still
+  // active. New moderation closes such orders; migrate the same way on load so
+  // the service record is not stranded without an action.
+  if (post.moderation === 'hidden' && orderStatus && isOneOf(orderStatus, ACTIVE_ORDER_STATUSES)) {
+    orderStatus = 'cancelled-local-demo'
+    if ((orderEvents?.length ?? 0) < MAX_ORDER_EVENTS) {
+      orderEvents = [
+        ...(orderEvents ?? []),
+        {
+          id: `EVT-LEGACY-CANCEL-${post.id}`,
+          type: 'cancel',
+          actor: 'reviewer',
+          note: '旧存档下架订单自动关闭（载入迁移）',
+          createdAt: new Date().toISOString(),
+          synthetic: true,
+        },
+      ]
+    }
+  }
   return {
     ...post,
     moderation: post.moderation ?? 'pending',
+    orderStatus,
+    orderEvents,
     comments: post.comments.map(normalizeComment),
   }
 }
@@ -330,8 +407,15 @@ function normalizePost(post: Post): Post {
 /**
  * Legacy archives have no moderation fields and must not become public by
  * accident. Legacy chat archives are retained but never rendered or writable.
+ * Archives written before unread-notice tracking adopt the latest existing
+ * notice as their read cursor so old history is not shown as unread.
  */
 function normalizeCommunityState(state: CommunityState): CommunityState {
+  const systemNoticeTimes = state.threads
+    .filter((thread) => thread.kind === 'system')
+    .flatMap((thread) => thread.messages.map((message) => message.createdAt))
+    .sort()
+  const latestNoticeAt = systemNoticeTimes[systemNoticeTimes.length - 1]
   return {
     posts: state.posts.map(normalizePost),
     threads: state.threads,
@@ -339,6 +423,9 @@ function normalizeCommunityState(state: CommunityState): CommunityState {
     ledgerEntries: state.ledgerEntries,
     reports: state.reports ?? [],
     auditLog: state.auditLog ?? [],
+    ...(state.notificationsReadAt !== undefined
+      ? { notificationsReadAt: state.notificationsReadAt }
+      : latestNoticeAt ? { notificationsReadAt: latestNoticeAt } : {}),
   }
 }
 
@@ -357,12 +444,17 @@ function isCommunityState(value: unknown): value is CommunityState {
 
   const postIds = new Set<string>()
   const commentIds = new Set<string>()
+  const orderEventIds = new Set<string>()
   for (const post of value.posts) {
     if (!isPost(post) || postIds.has(post.id)) return false
     postIds.add(post.id)
     for (const comment of post.comments) {
       if (commentIds.has(comment.id)) return false
       commentIds.add(comment.id)
+    }
+    for (const event of post.orderEvents ?? []) {
+      if (orderEventIds.has(event.id)) return false
+      orderEventIds.add(event.id)
     }
   }
 
@@ -408,6 +500,9 @@ function isCommunityState(value: unknown): value is CommunityState {
       auditIds.add(entry.id)
     }
   }
+
+  const notificationsReadAt = value.notificationsReadAt
+  if (notificationsReadAt !== undefined && !isTimestamp(notificationsReadAt)) return false
 
   return true
 }
@@ -589,6 +684,7 @@ export const useCommunityStore = defineStore('community', () => {
   const ledgerEntries = ref<LedgerEntry[]>(initialState.state.ledgerEntries)
   const reports = ref<Report[]>(initialState.state.reports ?? [])
   const auditLog = ref<AuditLogEntry[]>(initialState.state.auditLog ?? [])
+  const notificationsReadAt = ref<string | undefined>(initialState.state.notificationsReadAt)
   /** Synthetic demo identity only; never persisted and never a real auth state. */
   const membership = ref<MembershipRole>('visitor')
 
@@ -610,6 +706,17 @@ export const useCommunityStore = defineStore('community', () => {
     ),
   )
   const ledger = computed(() => ledgerEntries.value)
+  const systemNotices = computed<DemoMessage[]>(() => threads.value
+    .filter((thread) => thread.kind === 'system')
+    .flatMap((thread) => thread.messages)
+    .slice()
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)))
+  /** Unread local notices; string comparison is safe for ISO timestamps. */
+  const unreadNoticeCount = computed(() => {
+    const readAt = notificationsReadAt.value
+    if (!readAt) return systemNotices.value.length
+    return systemNotices.value.filter((message) => message.createdAt > readAt).length
+  })
   const state = computed<CommunityState>(() => ({
     posts: posts.value,
     threads: threads.value,
@@ -617,6 +724,9 @@ export const useCommunityStore = defineStore('community', () => {
     ledgerEntries: ledgerEntries.value,
     reports: reports.value,
     auditLog: auditLog.value,
+    ...(notificationsReadAt.value !== undefined
+      ? { notificationsReadAt: notificationsReadAt.value }
+      : {}),
   }))
 
   function applyState(next: CommunityState) {
@@ -626,12 +736,18 @@ export const useCommunityStore = defineStore('community', () => {
     ledgerEntries.value = next.ledgerEntries
     reports.value = next.reports ?? []
     auditLog.value = next.auditLog ?? []
+    notificationsReadAt.value = next.notificationsReadAt
   }
 
   function persistState(
     next: CommunityState,
     options: { allowRecovery?: boolean } = {},
   ): CommunityActionResult {
+    // Callers build partial state snapshots for one mutation; keep the current
+    // read cursor instead of silently clearing unread tracking on every write.
+    const hydrated: CommunityState = next.notificationsReadAt === undefined && notificationsReadAt.value !== undefined
+      ? { ...next, notificationsReadAt: notificationsReadAt.value }
+      : next
     if (
       !options.allowRecovery
       && (
@@ -649,7 +765,7 @@ export const useCommunityStore = defineStore('community', () => {
         storageError.value = '本机存储不可用，无法安全重置损坏存档；原文仍保留在浏览器中。'
         return failure(storageError.value)
       }
-      applyState(next)
+      applyState(hydrated)
       storageStatus.value = 'memory-only'
       storageError.value = MEMORY_ONLY_MESSAGE
       return { ok: true, errors: [], message: MEMORY_ONLY_MESSAGE }
@@ -670,7 +786,14 @@ export const useCommunityStore = defineStore('community', () => {
       return failure(CONFLICT_MESSAGE)
     }
 
-    const serialized = serializeState(next, savedAt)
+    const overLimitPost = hydrated.posts.find((post) => (post.orderEvents?.length ?? 0) > MAX_ORDER_EVENTS)
+    if (overLimitPost) {
+      return failure(
+        `订单《${overLimitPost.title}》的演练事件已达 ${MAX_ORDER_EVENTS} 条上限，本次操作未保存；请重置演练数据后再试。`,
+      )
+    }
+
+    const serialized = serializeState(hydrated, savedAt)
     if (serialized.length > MAX_STORED_CHARS) {
       return failure(
         `本次操作会生成超过 ${MAX_STORED_CHARS} 字符的本机存档，已拒绝写入且旧存档保持不变；请清理部分演练数据后再试。`,
@@ -684,7 +807,7 @@ export const useCommunityStore = defineStore('community', () => {
       return failure(SAVE_ERROR_MESSAGE)
     }
 
-    applyState(next)
+    applyState(hydrated)
     storageStatus.value = 'saved'
     storageError.value = null
     lastSavedAt.value = savedAt
@@ -738,6 +861,19 @@ export const useCommunityStore = defineStore('community', () => {
     return { ok: true, errors: [], message: '已重新载入最新本机存档。' }
   }
 
+  /** Mark every current local system notice as read. */
+  function markNotificationsRead(): CommunityActionResult {
+    if (unreadNoticeCount.value === 0) {
+      return { ok: true, errors: [], already: true, message: '本机系统通知都已标记为已读。' }
+    }
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const result = persistState({ ...state.value, notificationsReadAt: nowIso() })
+    return result.ok
+      ? { ...result, message: '已把本机系统通知标为已读（仅当前浏览器）。' }
+      : result
+  }
+
   if (typeof window !== 'undefined') {
     window.addEventListener('storage', (event) => {
       if (event.key !== COMMUNITY_STORAGE_KEY && event.key !== null) return
@@ -775,6 +911,111 @@ export const useCommunityStore = defineStore('community', () => {
       reports: reports.value,
       auditLog: auditLog.value,
     }
+  }
+
+  /**
+   * Append one synthetic system notice to the demo inbox. Notification
+   * generation is local-only and never leaves the browser.
+   */
+  function appendSystemNotice(next: CommunityState, content: string, kind: NoticeKind = 'system'): CommunityState {
+    const text = typeof content === 'string' ? content.trim() : ''
+    if (!text) return next
+
+    const thread = next.threads.find((item) => item.kind === 'system')
+    const allMessageIds = next.threads.flatMap((item) => item.messages.map((message) => message.id))
+    // When a legacy archive has no system thread, create a fresh id instead of a
+    // fixed one so an existing thread can never collide with it.
+    const threadId = thread?.id ?? nextId('SYNTH-THREAD', next.threads.map((item) => item.id))
+    const createdAt = nowIso()
+    const notice: DemoMessage = {
+      id: nextId('SYNTH-MESSAGE', allMessageIds),
+      threadId,
+      sender: 'system',
+      content: text.length > MAX_CONTENT_CHARS ? `${text.slice(0, MAX_CONTENT_CHARS - 1)}…` : text,
+      createdAt,
+      automaticReply: false,
+      noticeKind: kind,
+      synthetic: true,
+    }
+
+    if (!thread) {
+      if (next.threads.length >= MAX_THREADS) return next
+      return {
+        ...next,
+        threads: [...next.threads, {
+          id: notice.threadId,
+          kind: 'system',
+          title: '系统通知（演练）',
+          updatedAt: createdAt,
+          messages: [notice],
+        }],
+      }
+    }
+    if (thread.messages.length >= MAX_MESSAGES_PER_THREAD) return next
+    return {
+      ...next,
+      threads: next.threads.map((item) => item.id === thread.id
+        ? { ...item, updatedAt: createdAt, messages: [...item.messages, notice] }
+        : item),
+    }
+  }
+
+  function demoOrderRole(post: Post): 'author' | 'acceptor' | null {
+    if (post.mode !== 'help') return null
+    if (post.author.id === SYNTHETIC_DEMO_AUTHOR.id) return 'author'
+    if (post.acceptedByMe === true) return 'acceptor'
+    return null
+  }
+
+  function orderEventNote(prefix: string, note: unknown): string {
+    const trimmed = typeof note === 'string' ? note.trim() : ''
+    const base = trimmed ? `${prefix}：${trimmed}` : prefix
+    return base.length > MAX_DETAIL_CHARS ? `${base.slice(0, MAX_DETAIL_CHARS - 1)}…` : base
+  }
+
+  function makeOrderEvent(
+    type: OrderEventType,
+    actor: OrderEventActor,
+    note: string,
+  ): OrderEvent {
+    return {
+      id: nextId(
+        'SYNTH-ORDER-EVENT',
+        posts.value.flatMap((post) => (post.orderEvents ?? []).map((event) => event.id)),
+      ),
+      type,
+      actor,
+      note,
+      createdAt: nowIso(),
+      synthetic: true,
+    }
+  }
+
+  function estimateMinutesFromDuration(duration: string | undefined): number {
+    if (typeof duration !== 'string' || !duration.trim()) return 30
+    const hours = /(\d+(?:\.\d+)?)\s*(小时|時|h|hr|hours?)/i.exec(duration)
+    if (hours) return Math.max(1, Math.round(Number(hours[1]) * 60))
+    const minutes = /(\d+)\s*(分钟|分|min|minutes?)/i.exec(duration)
+    if (minutes) return Math.max(1, Number(minutes[1]))
+    return 30
+  }
+
+  /**
+   * Completion produces one explicitly unsettled demo ledger entry. It is not a
+   * settlement, a balance or a redeemable amount.
+   */
+  function withCompletionLedger(next: CommunityState, post: Post): CommunityState {
+    if (next.ledgerEntries.length >= MAX_LEDGER_ENTRIES) return next
+    const entry: LedgerEntry = {
+      id: nextId('SYNTH-LEDGER', next.ledgerEntries.map((item) => item.id)),
+      title: `演练完成：${post.title}`,
+      minutes: estimateMinutesFromDuration(post.duration),
+      status: LEDGER_ENTRY_STATUS,
+      note: '由本机演练订单完成事件生成；未经真实双方确认，不可结算、兑换或提现。',
+      createdAt: nowIso(),
+      synthetic: true,
+    }
+    return { ...next, ledgerEntries: [entry, ...next.ledgerEntries] }
   }
 
   function setMembership(value: MembershipRole): CommunityActionResult {
@@ -1036,9 +1277,9 @@ export const useCommunityStore = defineStore('community', () => {
     if (!isVisiblePost(post)) return failure('只能对审核通过且公开的求助演练单接单。')
     if (post.mode !== 'help') return failure('只有求助演练单可以标记接单。')
     if (post.author.id === SYNTHETIC_DEMO_AUTHOR.id) {
-      return failure('不能接自己发布的求助演练单。')
+      return failure('不能接自己发布的求助演练单；如需演示求助方视角，请使用“代合成邻居接单（演练）”。')
     }
-    if (post.orderStatus === 'accepted-local-demo') {
+    if (post.acceptedByMe === true || post.orderStatus === 'accepted-local-demo') {
       return {
         ok: true,
         errors: [],
@@ -1051,13 +1292,371 @@ export const useCommunityStore = defineStore('community', () => {
       return failure('这条求助演练单当前不可标记接单。')
     }
 
-    const result = persistState(withPost({
+    const nextPost: Post = {
       ...post,
       orderStatus: 'accepted-local-demo',
       acceptedByMe: true,
-    }))
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent('accept', 'demo-side', orderEventNote('本机参与者演练接单', null)),
+      ],
+    }
+    const result = persistState(withPost(nextPost))
     return result.ok
       ? { ...result, id: post.id, message: ORDER_LOCAL_DEMO_NOTICE }
+      : result
+  }
+
+  /**
+   * Demo-only counterpart acceptance: lets a published help post show the
+   * requester-side flow without a second real person. The event is explicitly
+   * labelled as a synthetic counterpart action.
+   */
+  function counterpartAcceptOrder(postId: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练求助。')
+    if (!isVisiblePost(post)) return failure('只能对审核通过且公开的本人求助模拟对方接单。')
+    if (post.mode !== 'help') return failure('只有求助演练单可以模拟接单。')
+    if (demoOrderRole(post) !== 'author') {
+      return failure('只有本人发布的求助可以代合成邻居接单；他人求助请使用“演练接单”。')
+    }
+    if (post.orderStatus !== 'open') return failure('这条求助演练单当前不是待接单状态。')
+
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'accepted-local-demo',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent('accept', 'synthetic-counterpart', orderEventNote('合成邻居演练接单', null)),
+      ],
+    }
+    const next = appendSystemNotice(
+      withPost(nextPost),
+      `你的求助《${post.title}》在本地演练中已被合成邻居标记接单；不会联系或通知真实志愿者。`,
+      'order',
+    )
+    const result = persistState(next)
+    return result.ok ? { ...result, id: post.id, message: ORDER_COUNTERPART_NOTICE } : result
+  }
+
+  function requestOrderCompletion(postId: string, note = ''): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有完成流程。')
+    if (demoOrderRole(post) !== 'acceptor') {
+      return failure('只有本机接单的成员可以发起完成申请。')
+    }
+    if (post.orderStatus !== 'accepted-local-demo') {
+      return failure('只有已接单的演练订单可以发起完成申请。')
+    }
+
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'completion-requested',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent('request-completion', 'demo-side', orderEventNote('本机接单成员发起完成申请', note)),
+      ],
+    }
+    const result = persistState(withPost(nextPost))
+    return result.ok
+      ? { ...result, id: post.id, message: ORDER_FULFILLMENT_LOCAL_NOTICE }
+      : result
+  }
+
+  function counterpartRequestOrderCompletion(postId: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有完成流程。')
+    if (demoOrderRole(post) !== 'author') {
+      return failure('只有本人发布的求助可以代合成接单方发起完成申请。')
+    }
+    if (post.orderStatus !== 'accepted-local-demo') {
+      return failure('只有已接单的演练订单可以发起完成申请。')
+    }
+
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'completion-requested',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent(
+          'request-completion',
+          'synthetic-counterpart',
+          orderEventNote('合成接单方发起完成申请', null),
+        ),
+      ],
+    }
+    const next = appendSystemNotice(
+      withPost(nextPost),
+      `你的求助《${post.title}》的合成接单方已发起完成申请；请在社区动态中打开该求助卡片确认完成（本机演练）。`,
+      'order',
+    )
+    const result = persistState(next)
+    return result.ok ? { ...result, id: post.id, message: ORDER_COUNTERPART_NOTICE } : result
+  }
+
+  function confirmOrderCompletion(postId: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有完成流程。')
+    if (demoOrderRole(post) !== 'author') {
+      return failure('只有求助发布者可以确认完成。')
+    }
+    if (post.orderStatus !== 'completion-requested') {
+      return failure('当前没有等待确认的完成申请。')
+    }
+    // Legacy archives may have no events or a partial acceptance timeline. The
+    // status itself is the source of truth for an author-side confirmation.
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'completed-local-demo',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent('confirm-completion', 'demo-side', orderEventNote('本机发布者确认完成', null)),
+      ],
+    }
+    const withLedger = withCompletionLedger(withPost(nextPost), post)
+    const ledgerAdded = withLedger.ledgerEntries.length > ledgerEntries.value.length
+    const result = persistState(withLedger)
+    if (!result.ok) return result
+    return {
+      ...result,
+      id: post.id,
+      message: ledgerAdded
+        ? '已在本机演练中记录完成，并生成一条“未结算”的演示时长记录；不可结算、兑换或提现。'
+        : '已在本机演练中记录完成；演示时长账本已达上限，本次未新增时长记录。',
+    }
+  }
+
+  function counterpartConfirmOrderCompletion(postId: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有完成流程。')
+    if (demoOrderRole(post) !== 'acceptor') {
+      return failure('只有本机接单成员可以代合成求助方确认完成。')
+    }
+    if (post.orderStatus !== 'completion-requested') {
+      return failure('当前没有等待确认的完成申请。')
+    }
+    // Same legacy tolerance as author-side confirmation.
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'completed-local-demo',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent(
+          'confirm-completion',
+          'synthetic-counterpart',
+          orderEventNote('合成求助方确认完成', null),
+        ),
+      ],
+    }
+    const withLedger = withCompletionLedger(withPost(nextPost), post)
+    const ledgerAdded = withLedger.ledgerEntries.length > ledgerEntries.value.length
+    const next = appendSystemNotice(
+      withLedger,
+      `你申请完成的订单《${post.title}》已被合成求助方确认（本机演练）；形成未结算演示时长记录。`,
+      'order',
+    )
+    const result = persistState(next)
+    if (!result.ok) return result
+    return {
+      ...result,
+      id: post.id,
+      message: ledgerAdded
+        ? '已在本机演练中记录完成，并生成一条“未结算”的演示时长记录；不可结算、兑换或提现。'
+        : '已在本机演练中记录完成；演示时长账本已达上限，本次未新增时长记录。',
+    }
+  }
+
+  function submitOrderFeedback(postId: string, rating: number, note: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对审核通过且公开的演练订单记录体验。')
+    if (post.mode !== 'help') return failure('只有求助演练单有完成体验记录。')
+    if (post.orderStatus !== 'completed-local-demo') {
+      return failure('只有已完成的演练订单可以记录体验。')
+    }
+    if (demoOrderRole(post) === null) {
+      return failure('只有本机演练的求助发布者或接单成员可以记录体验。')
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return failure('请选择 1–5 星的演练体验。')
+    }
+    const noteText = typeof note === 'string' ? note.trim() : ''
+    if (noteText.length > MAX_REASON_CHARS) {
+      return failure(`体验说明不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+    if (post.orderFeedback) return failure('这单已经有一条本机体验记录，不能重复提交。')
+
+    const result = persistState(withPost({
+      ...post,
+      orderFeedback: {
+        rating,
+        note: noteText,
+        createdAt: nowIso(),
+        synthetic: true,
+      },
+    }))
+    return result.ok
+      ? { ...result, id: post.id, message: '已保存本机演练体验记录；不会发送评价、影响真实信誉或结算。' }
+      : result
+  }
+
+  function cancelOrder(postId: string, reason = ''): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有取消/关闭流程。')
+    if (!demoOrderRole(post)) return failure('只有本人发布或本机接单的演练订单可以取消/关闭。')
+    if (!isOneOf(post.orderStatus, ['open', 'accepted-local-demo', 'completion-requested', 'disputed-local-demo'] as const)) {
+      return failure('这条演练订单当前不能取消或关闭。')
+    }
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写取消/关闭原因（仅演练用途）。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`取消/关闭原因不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'cancelled-local-demo',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent('cancel', 'demo-side', orderEventNote('取消/关闭订单', reasonText)),
+      ],
+    }
+    const result = persistState(withPost(nextPost))
+    return result.ok
+      ? { ...result, id: post.id, message: '已在本机演练中关闭该订单；不会产生真实取消、退款、评价或通知。' }
+      : result
+  }
+
+  function raiseOrderDispute(postId: string, reason = ''): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有争议流程。')
+    if (!demoOrderRole(post)) return failure('只有本人参与的本机演练订单可以发起争议。')
+    if (!isOneOf(post.orderStatus, ['accepted-local-demo', 'completion-requested'] as const)) {
+      return failure('只有进行中的演练订单可以发起争议。')
+    }
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写争议原因（仅演练用途）。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`争议原因不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+
+    const nextPost: Post = {
+      ...post,
+      orderStatus: 'disputed-local-demo',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent('dispute', 'demo-side', orderEventNote('发起争议', reasonText)),
+      ],
+    }
+    const result = persistState(withPost(nextPost))
+    return result.ok
+      ? { ...result, id: post.id, message: '已在本机演练中标记争议；没有真实仲裁、投诉渠道或通知。' }
+      : result
+  }
+
+  function resolveOrderDispute(
+    postId: string,
+    resolution: 'resume' | 'close',
+    reason = '',
+  ): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+    if (resolution !== 'resume' && resolution !== 'close') {
+      return failure('争议处理结果无效。')
+    }
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练订单。')
+    if (!isVisiblePost(post)) return failure('只能对本机演练中审核通过且公开的订单操作。')
+    if (post.mode !== 'help') return failure('只有求助演练单有争议流程。')
+    if (!demoOrderRole(post)) return failure('只有本人参与的本机演练订单可以记录争议处理。')
+    if (post.orderStatus !== 'disputed-local-demo') {
+      return failure('这条演练订单当前不在争议状态。')
+    }
+
+    const reasonText = normalizeReason(reason)
+    if (!reasonText) return failure('请填写争议处理说明（仅演练用途）。')
+    if (reasonText.length > MAX_REASON_CHARS) {
+      return failure(`争议处理说明不能超过 ${MAX_REASON_CHARS} 个字符。`)
+    }
+
+    const nextPost: Post = {
+      ...post,
+      orderStatus: resolution === 'resume' ? 'accepted-local-demo' : 'cancelled-local-demo',
+      orderEvents: [
+        ...(post.orderEvents ?? []),
+        makeOrderEvent(
+          resolution === 'resume' ? 'resume-after-dispute' : 'close-after-dispute',
+          'demo-side',
+          orderEventNote(resolution === 'resume' ? '撤销争议并继续履约' : '因争议关闭订单', reasonText),
+        ),
+      ],
+    }
+    const result = persistState(withPost(nextPost))
+    return result.ok
+      ? {
+          ...result,
+          id: post.id,
+          message: resolution === 'resume'
+            ? '已在本机演练中撤销争议并恢复为履约中；没有真实仲裁或通知。'
+            : '已在本机演练中因争议关闭订单；没有真实仲裁、退款或通知。',
+        }
       : result
   }
 
@@ -1071,6 +1670,9 @@ export const useCommunityStore = defineStore('community', () => {
     if (!post) return failure('找不到这条演练动态。')
     if (!isVisiblePost(post)) return failure('只能报名审核通过且公开的志愿活动。')
     if (post.mode !== 'volunteer') return failure('只有志愿动态可以报名。')
+    if (post.volunteerKind !== 'activity') {
+      return failure('只有“活动招募”可以报名；志愿记录是分享动态，不提供报名。旧存档缺少活动类型标识的记录请重新发布活动。')
+    }
     if (post.signedUpByMe) {
       return {
         ok: true,
@@ -1093,6 +1695,31 @@ export const useCommunityStore = defineStore('community', () => {
     }))
     return result.ok
       ? { ...result, id: post.id, message: EVENT_LOCAL_DEMO_NOTICE }
+      : result
+  }
+
+  function cancelEventSignup(postId: string): CommunityActionResult {
+    const blocked = blockedByRecovery()
+    if (blocked) return blocked
+    const memberGate = requireMember()
+    if (memberGate) return memberGate
+
+    const post = posts.value.find((item) => item.id === postId)
+    if (!post) return failure('找不到这条演练动态。')
+    if (!isVisiblePost(post)) return failure('只能操作审核通过且公开的志愿活动。')
+    if (post.mode !== 'volunteer') return failure('只有志愿动态有报名记录。')
+    if (post.volunteerKind !== 'activity') return failure('只有“活动招募”才有报名记录。')
+    if (post.signedUpByMe !== true) {
+      return failure('当前没有可取消的本机演练报名。')
+    }
+
+    const result = persistState(withPost({
+      ...post,
+      eventSignupCount: Math.max(0, (post.eventSignupCount ?? 1) - 1),
+      signedUpByMe: false,
+    }))
+    return result.ok
+      ? { ...result, id: post.id, message: '已取消本机演练报名；不会产生真实取消或通知。' }
       : result
   }
 
@@ -1119,8 +1746,12 @@ export const useCommunityStore = defineStore('community', () => {
     if (!post) return failure('找不到这条演练订单。')
     if (post.mode !== 'help') return failure('只有求助演练单可以留言。')
     if (!isVisiblePost(post)) return failure('只能给审核通过且公开的求助订单留言。')
-    if (post.orderStatus !== 'accepted-local-demo') {
-      return failure('该求助订单尚未在本机演练中接单，暂不能留言。')
+    if (!isOneOf(post.orderStatus, ACTIVE_ORDER_STATUSES)) {
+      return failure(
+        post.orderStatus === 'completed-local-demo' || post.orderStatus === 'cancelled-local-demo'
+          ? '该订单已完成或关闭，留言只读，不能再新增。'
+          : '该求助订单尚未在本机演练中接单，暂不能留言。',
+      )
     }
     if (!participatesInOrder(post)) {
       return failure('只有订单作者或本机接单成员可以留言。')
@@ -1208,11 +1839,43 @@ export const useCommunityStore = defineStore('community', () => {
       ...post,
       moderation: status,
       reviewNote: reasonText,
+      ...(status === 'hidden'
+        && post.mode === 'help'
+        && isOneOf(post.orderStatus, ACTIVE_ORDER_STATUSES)
+        ? {
+            orderStatus: 'cancelled-local-demo' as const,
+            orderEvents: [
+              ...(post.orderEvents ?? []),
+              ...((post.orderEvents?.length ?? 0) < MAX_ORDER_EVENTS
+                ? [makeOrderEvent(
+                    'cancel',
+                    'reviewer',
+                    orderEventNote('内容被审核员下架，订单演练自动关闭', reasonText),
+                  )]
+                : []),
+            ],
+          }
+        : {}),
     }
-    const result = persistState({
+    const base = {
       ...withPost(nextPost),
       auditLog: [...auditLog.value, nextAuditEntry('moderate-post', post.id, reasonText, status)],
-    })
+    }
+    const moderationLabel = status === 'approved' ? '审核通过' : status === 'rejected' ? '被驳回' : '已下架'
+    const noticeBase = post.author.id === SYNTHETIC_DEMO_AUTHOR.id
+      ? appendSystemNotice(base, `你的发布《${post.title}》${moderationLabel}。审核说明：${reasonText}`, 'moderation')
+      : base
+    const next = status === 'hidden'
+      && post.mode === 'help'
+      && isOneOf(post.orderStatus, ACTIVE_ORDER_STATUSES)
+      && (post.author.id === SYNTHETIC_DEMO_AUTHOR.id || post.acceptedByMe === true)
+      ? appendSystemNotice(
+          noticeBase,
+          `你参与的求助《${post.title}》因内容下架，本机订单演练已自动关闭；未发生真实服务或结算。`,
+          'moderation',
+        )
+      : noticeBase
+    const result = persistState(next)
     return result.ok ? { ...result, id: post.id } : result
   }
 
@@ -1262,10 +1925,15 @@ export const useCommunityStore = defineStore('community', () => {
         item.id === comment.id ? nextComment : item,
       ),
     }
-    const result = persistState({
+    const base = {
       ...withPost(nextPost),
       auditLog: [...auditLog.value, nextAuditEntry('moderate-comment', comment.id, reasonText, status)],
-    })
+    }
+    const moderationLabel = status === 'approved' ? '审核通过' : status === 'rejected' ? '被驳回' : '已下架'
+    const next = comment.author.id === SYNTHETIC_DEMO_AUTHOR.id
+      ? appendSystemNotice(base, `你在《${post.title}》下的评论${moderationLabel}。审核说明：${reasonText}`, 'moderation')
+      : base
+    const result = persistState(next)
     return result.ok ? { ...result, id: comment.id } : result
   }
 
@@ -1286,9 +1954,6 @@ export const useCommunityStore = defineStore('community', () => {
     if (!reasonText) return failure('请填写举报理由。')
     if (reasonText.length > MAX_REASON_CHARS) {
       return failure(`举报理由不能超过 ${MAX_REASON_CHARS} 个字符。`)
-    }
-    if (reports.value.length >= MAX_REPORTS) {
-      return failure('本机举报数量已达上限，请先处理已有举报。')
     }
 
     if (targetType === 'post') {
@@ -1331,17 +1996,46 @@ export const useCommunityStore = defineStore('community', () => {
       if (!post || !isVisiblePost(post)) {
         return failure('只能举报审核通过且公开帖子下的订单留言。')
       }
-      if (post.mode !== 'help' || post.orderStatus !== 'accepted-local-demo' || !participatesInOrder(post)) {
-        return failure('只能举报本人参与且已接单求助订单的留言。')
+      if (post.mode !== 'help' || !isOneOf(post.orderStatus, ACTIVE_ORDER_STATUSES) || !participatesInOrder(post)) {
+        return failure('只能举报本人参与且进行中求助订单的留言。')
       }
     }
 
+    // New reports carry the local demo reporter; legacy reports without a
+    // reporter are treated as the same single demo user for deduplication.
+    const duplicate = reports.value.find((item) =>
+      item.status === 'pending'
+      && item.targetType === targetType
+      && item.targetId === normalizedTargetId
+      && (item.reporter === undefined || item.reporter.id === SYNTHETIC_DEMO_AUTHOR.id),
+    )
+    if (duplicate) {
+      return {
+        ok: true,
+        errors: [],
+        id: duplicate.id,
+        already: true,
+        message: `已有一条待处理的本机举报（${duplicate.id}），未重复提交。`,
+      }
+    }
+
+    // Check capacity after deduplication so a duplicate still receives the
+    // actionable "already pending" result at the boundary.
+    if (reports.value.length >= MAX_REPORTS) {
+      return failure('本机举报数量已达上限，请先处理已有举报。')
+    }
+
+    const auditLimit = auditLimitBlocked()
+    if (auditLimit) return auditLimit
+
+    const reporter: FictionalAuthor = { ...SYNTHETIC_DEMO_AUTHOR }
     const report: Report = {
       id: nextId('SYNTH-REPORT', reports.value.map((item) => item.id)),
       targetType,
       targetId: normalizedTargetId,
       reason: reasonText,
       status: 'pending',
+      reporter,
       createdAt: nowIso(),
       synthetic: true,
     }
@@ -1351,7 +2045,7 @@ export const useCommunityStore = defineStore('community', () => {
       complaints: complaints.value,
       ledgerEntries: ledgerEntries.value,
       reports: [report, ...reports.value],
-      auditLog: auditLog.value,
+      auditLog: [...auditLog.value, nextAuditEntry('create-report', normalizedTargetId, reasonText, 'pending')],
     })
     return result.ok ? { ...result, id: report.id } : result
   }
@@ -1387,14 +2081,22 @@ export const useCommunityStore = defineStore('community', () => {
       status,
       resolution: reasonText,
     }
-    const result = persistState({
+    const nextState: CommunityState = {
       posts: posts.value,
       threads: threads.value,
       complaints: complaints.value,
       ledgerEntries: ledgerEntries.value,
       reports: reports.value.map((item) => item.id === report.id ? nextReport : item),
       auditLog: [...auditLog.value, nextAuditEntry('resolve-report', report.id, reasonText, status)],
-    })
+    }
+    const withNotice = report.reporter === undefined || report.reporter.id === SYNTHETIC_DEMO_AUTHOR.id
+      ? appendSystemNotice(
+          nextState,
+          `你提交的举报（${report.id}）${status === 'resolved' ? '已处理' : '被判定不予支持'}：${reasonText}。仅为本机演练记录，不代表真实机构结论。`,
+          'report',
+        )
+      : nextState
+    const result = persistState(withNotice)
     return result.ok ? { ...result, id: report.id } : result
   }
 
@@ -1435,16 +2137,21 @@ export const useCommunityStore = defineStore('community', () => {
     if (auditLimit) return auditLimit
 
     const hiddenMessageId = message.id
+    const senderWasDemoUser = message.sender === 'demo-user'
     const nextThread: DemoThread = {
       ...thread,
       messages: thread.messages.map((item) =>
         item.id === hiddenMessageId ? { ...item, hidden: true, reviewNote: reasonText } : item,
       ),
     }
-    const result = persistState({
+    const base = {
       ...withThread(nextThread),
       auditLog: [...auditLog.value, nextAuditEntry('hide-message', hiddenMessageId, reasonText, 'hidden')],
-    })
+    }
+    const next = senderWasDemoUser
+      ? appendSystemNotice(base, `你在订单《${thread.title}》中的一条留言已被审核员下架。下架理由：${reasonText}`, 'message')
+      : base
+    const result = persistState(next)
     return result.ok ? { ...result, id: hiddenMessageId } : result
   }
 
@@ -1516,6 +2223,14 @@ export const useCommunityStore = defineStore('community', () => {
       : result
   }
 
+  /**
+   * Read-only backup text for the current in-memory demo state. This is the
+   * same envelope that would be stored locally; it never uploads anything.
+   */
+  function readBackupJson(): string {
+    return serializeState(state.value, lastSavedAt.value ?? nowIso())
+  }
+
   return {
     posts,
     threads,
@@ -1528,6 +2243,9 @@ export const useCommunityStore = defineStore('community', () => {
     messages,
     visiblePosts,
     ledger,
+    systemNotices,
+    unreadNoticeCount,
+    notificationsReadAt,
     state,
     storageStatus,
     storageError,
@@ -1535,12 +2253,23 @@ export const useCommunityStore = defineStore('community', () => {
     unreadableStoredData,
     syntheticDataNotice: SYNTHETIC_DATA_NOTICE,
     setMembership,
+    markNotificationsRead,
     toggleLike,
     toggleFavorite,
     addComment,
     publishPost,
     acceptOrder,
+    counterpartAcceptOrder,
+    requestOrderCompletion,
+    counterpartRequestOrderCompletion,
+    confirmOrderCompletion,
+    counterpartConfirmOrderCompletion,
+    submitOrderFeedback,
+    cancelOrder,
+    raiseOrderDispute,
+    resolveOrderDispute,
     signUpForEvent,
+    cancelEventSignup,
     sendDemoChatMessage,
     sendOrderMessage,
     moderatePost,
@@ -1551,5 +2280,6 @@ export const useCommunityStore = defineStore('community', () => {
     addComplaint,
     resetDemoData,
     reloadFromStorage,
+    readBackupJson,
   }
 })
